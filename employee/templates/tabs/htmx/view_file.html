@@ -1,11 +1,11 @@
-{% load i18n %} {% load attendancefilters %} {% load static %}
+{% load i18n %} {% load horillafilters %} {% load static %}
 <div class="d-flex justify-content-end">
 	<div class="oh-btn-group mb-4">
 		<a
 			type="submit"
 			hx-get="{% url 'file-upload' document.id %}"
-			hx-target="#uploadFileForm" data-toggle="oh-modal-toggle"
-			data-target="#uploadFileModal"
+			hx-target="#objectCreateModalTarget" data-toggle="oh-modal-toggle"
+			data-target="#objectCreateModal"
 			title="Upload file"
 			class="oh-btn oh-btn--warning w-100"
 		>

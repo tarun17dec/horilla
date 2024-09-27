@@ -133,7 +133,7 @@
 				<li class="oh-tabs__tab" data-target="#tab_2">
 					{% trans "Suggested Tickets" %}
 				</li>
-				{% if request.user|is_reportingmanager %}
+				{% if request.user|is_reportingmanager or perms.helpdesk.view_ticket %}
 					<li class="oh-tabs__tab" data-target="#tab_3">
 						{% trans "All Tickets" %}
 					</li>
@@ -261,9 +261,10 @@
         var type = $("#id_type").val()
         var prefix = $("#id_prefix").val()
         var is_active = $("#id_ticket_type_is_active").val()
+
 		$.ajax({
 			type: "post",
-			url: "{% url 'ticket-type-create' %}?ajax=True",
+			url: `{% url 'ticket-type-create' %}?ajax=True`,
 			data: {
 			  csrfmiddlewaretoken: getCookie("csrftoken"),
 			  "title": title,

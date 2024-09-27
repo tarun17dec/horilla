@@ -96,11 +96,6 @@ urlpatterns = [
     ),
     path("welcome-aboard", views.welcome_aboard, name="welcome-aboard"),
     path(
-        "hired-candidate-chart",
-        views.hired_candidate_chart,
-        name="hired-candidate-chart",
-    ),
-    path(
         "onboard-candidate-chart",
         views.onboard_candidate_chart,
         name="onboard-candidate-chart",
@@ -154,5 +149,15 @@ urlpatterns = [
     ),
     path(
         "candidate-select/", views.candidate_select, name="candidate-select-onboarding"
+    ),
+    path(
+        "offer-letter-bulk-status-update/",
+        views.offer_letter_bulk_status_update,
+        name="offer-letter-bulk-status-update",
+    ),
+    path(
+        "onboarding-candidate-bulk-delete/",
+        views.onboarding_candidate_bulk_delete,
+        name="onboarding-candidate-bulk-delete",
     ),
 ]

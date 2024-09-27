@@ -75,3 +75,40 @@ def pms_owner_and_manager_can_enter(function, perm):
             return HttpResponse(script)
 
     return _function
+
+
+def check_permission_feedback_detailed_view(request, feedback, perm):
+    """
+    Checks if the user has permission to view the detailed view of feedback.
+
+    The user is allowed if they:
+    - Have the required permission
+    - Are the owner of the feedback
+    - Are the reporting manager of the feedback owner
+    - Are the feedback manager
+
+    Args:
+        request: The HTTP request object containing the user.
+        feedback: The feedback object being accessed.
+        perm: The specific permission required.
+
+    Returns:
+        bool: True if the user has permission, False otherwise.
+    """
+    user = request.user
+    employee = user.employee_get
+
+    # Check if the user is the reporting manager of the feedback owner
+    is_manager = EmployeeWorkInformation.objects.filter(
+        reporting_manager_id=employee, employee_id=feedback.employee_id
+    ).exists()
+
+    # Check for permission, if the user is the feedback manager, reporting manager, or the feedback owner
+    has_permission = (
+        user.has_perm(perm)
+        or feedback.manager_id == employee
+        or is_manager
+        or feedback.employee_id == employee
+    )
+
+    return has_permission

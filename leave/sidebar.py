@@ -2,6 +2,7 @@
 leave/sidebar.py
 """
 
+from django.apps import apps
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as trans
 
@@ -41,19 +42,19 @@ SUBMENUS = [
         "redirect": reverse("leave-allocation-request-view"),
     },
     {
-        "menu": trans("Compensatory Leave Requests"),
-        "redirect": reverse("view-compensatory-leave"),
-        "accessibility": "leave.sidebar.componstory_accessibility",
-    },
-    {
         "menu": trans("Holidays"),
         "redirect": reverse("holiday-view"),
         "accessibility": "leave.sidebar.holiday_accessibility",
     },
     {
         "menu": trans("Company Leaves"),
-        "redirect": reverse("holiday-view"),
+        "redirect": reverse("company-leave-view"),
         "accessibility": "leave.sidebar.company_leave_accessibility",
+    },
+    {
+        "menu": trans("Restrict Leaves"),
+        "redirect": reverse("restrict-view"),
+        "accessibility": "leave.sidebar.restrict_leave_accessibility",
     },
 ]
 
@@ -78,18 +79,38 @@ def type_accessibility(request, submenu, user_perms, *args, **kwargs):
 
 
 def assign_accessibility(request, submenu, user_perm, *args, **kwargs):
+    submenu["redirect"] = submenu["redirect"] + "?field=leave_type_id"
     return request.user.has_perm("leave.view_assignedleave") or is_reportingmanager(
         request.user
     )
 
 
 def holiday_accessibility(request, submenu, user_perms, *args, **kwargs):
-    return not request.user.has_perm("leave.add_holiday")
+    return not request.user.is_superuser and not request.user.has_perm(
+        "base.view_holidays"
+    )
 
 
 def company_leave_accessibility(request, submenu, user_perms, *args, **kwargs):
-    return not request.user.has_perm("leave.add_companyleave")
+    return not request.user.is_superuser and not request.user.has_perm(
+        "base.view_companyleaves"
+    )
 
 
-def componstory_accessibility(request, submenu, user_perms, *args, **kwargs):
-    return is_compensatory(request.user)
+def restrict_leave_accessibility(request, submenu, user_perms, *args, **kwargs):
+    return not request.user.is_superuser and not request.user.has_perm(
+        "leave.view_restrictleave"
+    )
+
+
+if apps.is_installed("attendance"):
+    SUBMENUS.append(
+        {
+            "menu": trans("Compensatory Leave Requests"),
+            "redirect": reverse("view-compensatory-leave"),
+            "accessibility": "leave.sidebar.componstory_accessibility",
+        }
+    )
+
+    def componstory_accessibility(request, submenu, user_perms, *args, **kwargs):
+        return is_compensatory(request.user)

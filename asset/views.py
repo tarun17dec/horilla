@@ -55,14 +55,18 @@ from base.methods import (
 )
 from base.models import Company
 from base.views import paginator_qry
-from employee.models import EmployeeWorkInformation
+from employee.models import Employee, EmployeeWorkInformation
+from horilla import settings
 from horilla.decorators import (
     hx_request_required,
     login_required,
     manager_can_enter,
+    owner_can_enter,
     permission_required,
 )
 from horilla.group_by import group_by_queryset
+from horilla.horilla_settings import HORILLA_DATE_FORMATS
+from horilla.methods import horilla_users_with_perms
 from notifications.signals import notify
 
 
@@ -102,7 +106,7 @@ def asset_creation(request, asset_category_id):
         None
     """
     initial_data = {"asset_category_id": asset_category_id}
-    form = AssetForm(initial=request.GET.dict() if request.GET else initial_data)
+    form = AssetForm(initial=initial_data)
     if request.method == "POST":
         form = AssetForm(request.POST, initial=initial_data)
         if form.is_valid():
@@ -192,6 +196,7 @@ def asset_update(request, asset_id):
             asset_form.save()
             messages.success(request, _("Asset Updated"))
     context = {
+        "instance": instance,
         "asset_form": asset_form,
         "asset_under": asset_under,
         "pg": previous_data,
@@ -249,6 +254,10 @@ def asset_delete(request, asset_id):
         Otherwise, redirect to the asset list view for the asset
         category of the deleted asset.
     """
+
+    request_copy = request.GET.copy()
+    request_copy.pop("requests_ids", None)
+    previous_data = request_copy.urlencode()
     try:
         asset = Asset.objects.get(id=asset_id)
     except Asset.DoesNotExist:
@@ -265,7 +274,7 @@ def asset_delete(request, asset_id):
         previous_data = request.GET.urlencode()
         asset_filtered = AssetFilter(request.GET, queryset=assets)
         asset_list = asset_filtered.qs
-        paginator = Paginator(asset_list, 20)
+        paginator = Paginator(asset_list, get_pagination())
         page_number = request.GET.get("page")
         page_obj = paginator.get_page(page_number)
         context = {
@@ -282,13 +291,38 @@ def asset_delete(request, asset_id):
             asset_del(request, asset)
         return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
+    instances_ids = request.GET.get("requests_ids", "[]")
+    instances_list = eval(instances_ids)
     if status == "In use":
         messages.info(request, _("Asset is in use"))
+        return redirect(
+            f"/asset/asset-information/{asset.id}/?{previous_data}&requests_ids={instances_list}&asset_info=true"
+        )
     elif asset_allocation:
         messages.error(request, _("Asset is used in allocation!."))
+        return redirect(
+            f"/asset/asset-information/{asset.id}/?{previous_data}&requests_ids={instances_list}&asset_info=true"
+        )
     else:
         asset_del(request, asset)
-    return redirect(f"/asset/asset-list/{asset_cat_id}")
+        if len(eval(instances_ids)) <= 1:
+            return HttpResponse("<script>window.location.reload();</script>")
+
+        if Asset.find(asset.id):
+            return redirect(
+                f"/asset/asset-information/{asset.id}/?{previous_data}&requests_ids={instances_list}&asset_info=true"
+            )
+        else:
+            instances_ids = request.GET.get("requests_ids")
+            instances_list = json.loads(instances_ids)
+            if asset_id in instances_list:
+                instances_list.remove(asset_id)
+    previous_instance, next_instance = closest_numbers(
+        json.loads(instances_ids), asset_id
+    )
+    return redirect(
+        f"/asset/asset-information/{next_instance}/?{previous_data}&requests_ids={instances_list}&asset_info=true"
+    )
 
 
 @login_required
@@ -308,9 +342,11 @@ def asset_list(request, cat_id):
     Raises:
         None
     """
-    asset_list_filter = request.GET.get("asset_list")
-    asset_info = request.GET.get("asset_info")
     context = {}
+    asset_under = ""
+    assets_in_category = Asset.objects.none()
+    asset_info = request.GET.get("asset_info")
+    asset_list_filter = request.GET.get("asset_list")
     if asset_list_filter:
         # if the data is present means that it is for asset filtered list
         query = request.GET.get("query")
@@ -330,10 +366,11 @@ def asset_list(request, cat_id):
     previous_data = request.GET.urlencode()
     asset_filtered = AssetFilter(request.GET, queryset=assets_in_category)
     asset_list = asset_filtered.qs
-    # Change 20 to the desired number of items per page
-    paginator = Paginator(asset_list, 20)
+
+    paginator = Paginator(asset_list, get_pagination())
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
+
     requests_ids = json.dumps([instance.id for instance in page_obj.object_list])
     data_dict = parse_qs(previous_data)
     get_key_instances(Asset, data_dict)
@@ -573,7 +610,8 @@ def asset_request_approve(request, req_id):
                 verb_es="¡Su solicitud de activo ha sido aprobada!",
                 verb_fr="Votre demande d'actif a été approuvée !",
                 redirect=reverse("asset-request-allocation-view")
-                + f"?asset_request_date={asset_request.asset_request_date}&asset_request_status={asset_request.asset_request_status}",
+                + f"?asset_request_date={asset_request.asset_request_date}\
+                &asset_request_status={asset_request.asset_request_status}",
                 icon="bag-check",
             )
             return HttpResponse("<script>window.location.reload()</script>")
@@ -611,7 +649,8 @@ def asset_request_reject(request, req_id):
         verb_es="¡Se ha rechazado su solicitud de activo!",
         verb_fr="Votre demande d'actif a été rejetée !",
         redirect=reverse("asset-request-allocation-view")
-        + f"?asset_request_date={asset_request.asset_request_date}&asset_request_status={asset_request.asset_request_status}",
+        + f"?asset_request_date={asset_request.asset_request_date}\
+        &asset_request_status={asset_request.asset_request_status}",
         icon="bag-check",
     )
     return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
@@ -654,15 +693,40 @@ def asset_allocate_creation(request):
     return render(request, "request_allocation/asset_allocation_creation.html", context)
 
 
+@login_required
 def asset_allocate_return_request(request, asset_id):
     """
     Handle the initiation of a return request for an allocated asset.
     """
+    previous_data = request.GET.urlencode()
     asset_assign = AssetAssignment.objects.get(id=asset_id)
     asset_assign.return_request = True
     asset_assign.save()
     message = _("Return request for {} initiated.").format(asset_assign.asset_id)
-    messages.info(request, message)
+    messages.success(request, message)
+    permed_users = horilla_users_with_perms("asset.change_assetassignment")
+    notify.send(
+        request.user.employee_get,
+        recipient=permed_users,
+        verb=f"Return request for {asset_assign.asset_id} initiated from\
+            {asset_assign.assigned_to_employee_id}",
+        verb_ar=f"تم بدء طلب الإرجاع للمورد {asset_assign.asset_id}\
+            من الموظف {asset_assign.assigned_to_employee_id}",
+        verb_de=f"Rückgabewunsch für {asset_assign.asset_id} vom Mitarbeiter\
+            {asset_assign.assigned_to_employee_id} initiiert",
+        verb_es=f"Solicitud de devolución para {asset_assign.asset_id}\
+            iniciada por el empleado {asset_assign.assigned_to_employee_id}",
+        verb_fr=f"Demande de retour pour {asset_assign.asset_id}\
+            initiée par l'employé {asset_assign.assigned_to_employee_id}",
+        redirect=reverse("asset-request-allocation-view")
+        + f"?assigned_to_employee_id={asset_assign.assigned_to_employee_id}&\
+        asset_id={asset_assign.asset_id}&assigned_date={asset_assign.assigned_date}",
+        icon="bag-check",
+    )
+    if request.META.get("HTTP_HX_REQUEST") == "true":
+        url = reverse("asset-request-allocation-view-search-filter")
+        return redirect(f"{url}?{previous_data}")
+
     return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
 
@@ -1006,7 +1070,6 @@ def asset_import(request):
     Returns:
         HttpResponseRedirect: A redirect to the asset category view after processing the import.
     """
-
     try:
         if request.method == "POST":
             file = request.FILES.get("asset_import")
@@ -1047,12 +1110,16 @@ def asset_import(request):
                     )
 
                 messages.success(request, _("Successfully imported Assets"))
-                return redirect(asset_category_view)
-            messages.error(request, _("File Error"))
+            else:
+                messages.error(request, _("File Error"))
+
             return redirect(asset_category_view)
+
     except Exception as exception:
         messages.error(request, f"{exception}")
         return redirect(asset_category_view)
+
+    return redirect(asset_category_view)
 
 
 @login_required
@@ -1140,26 +1207,12 @@ def asset_export_excel(request):
                         )
                     else:
                         date_format = "MMM. D, YYYY"
-                    # Define date formats
-                    date_formats = {
-                        "DD-MM-YYYY": "%d-%m-%Y",
-                        "DD.MM.YYYY": "%d.%m.%Y",
-                        "DD/MM/YYYY": "%d/%m/%Y",
-                        "MM/DD/YYYY": "%m/%d/%Y",
-                        "YYYY-MM-DD": "%Y-%m-%d",
-                        "YYYY/MM/DD": "%Y/%m/%d",
-                        "MMMM D, YYYY": "%B %d, %Y",
-                        "DD MMMM, YYYY": "%d %B, %Y",
-                        "MMM. D, YYYY": "%b. %d, %Y",
-                        "D MMM. YYYY": "%d %b. %Y",
-                        "dddd, MMMM D, YYYY": "%A, %B %d, %Y",
-                    }
 
                     # Convert the string to a datetime.date object
                     start_date = datetime.strptime(str(value), "%Y-%m-%d").date()
 
-                    # Print the formatted date for each format
-                    for format_name, format_string in date_formats.items():
+                    # The formatted date for each format
+                    for format_name, format_string in HORILLA_DATE_FORMATS.items():
                         if format_name == date_format:
                             value = start_date.strftime(format_string)
 
@@ -1242,7 +1295,7 @@ def asset_batch_view(request):
 
     asset_batches = AssetLot.objects.all()
     previous_data = request.GET.urlencode()
-    asset_batch_numbers_search_paginator = Paginator(asset_batches, 20)
+    asset_batch_numbers_search_paginator = Paginator(asset_batches, get_pagination())
     page_number = request.GET.get("page")
     asset_batch_numbers = asset_batch_numbers_search_paginator.get_page(page_number)
     asset_batch_form = AssetBatchForm()
@@ -1343,7 +1396,7 @@ def asset_batch_number_search(request):
 
     asset_batches = AssetLot.objects.all().filter(lot_number__icontains=search_query)
     previous_data = request.GET.urlencode()
-    asset_batch_numbers_search_paginator = Paginator(asset_batches, 20)
+    asset_batch_numbers_search_paginator = Paginator(asset_batches, get_pagination())
     page_number = request.GET.get("page")
     asset_batch_numbers = asset_batch_numbers_search_paginator.get_page(page_number)
 
@@ -1400,7 +1453,7 @@ def asset_dashboard(request):
 
 @login_required
 @permission_required(perm="asset.view_assetcategory")
-def asset_available_chart(request):
+def asset_available_chart(_request):
     """
     This function returns the response for the available asset chart in the asset dashboard.
     """
@@ -1420,14 +1473,14 @@ def asset_available_chart(request):
         "labels": labels,
         "dataset": dataset,
         "message": _("Oops!! No Asset found..."),
-        "emptyImageSrc": "/static/images/ui/asset.png",
+        "emptyImageSrc": f"/{settings.STATIC_URL}images/ui/asset.png",
     }
     return JsonResponse(response)
 
 
 @login_required
 @permission_required(perm="asset.view_assetcategory")
-def asset_category_chart(request):
+def asset_category_chart(_request):
     """
     This function returns the response for the asset category chart in the asset dashboard.
     """
@@ -1450,7 +1503,7 @@ def asset_category_chart(request):
         "labels": labels,
         "dataset": dataset,
         "message": _("Oops!! No Asset found..."),
-        "emptyImageSrc": "/static/images/ui/asset.png",
+        "emptyImageSrc": f"/{settings.STATIC_URL}images/ui/asset.png",
     }
     return JsonResponse(response)
 
@@ -1563,6 +1616,111 @@ def asset_history_search(request):
             "filter_dict": data_dict,
             "field": field,
             "pd": previous_data,
+            "requests_ids": requests_ids,
+        },
+    )
+
+
+@login_required
+@owner_can_enter("asset.view_asset", Employee)
+def asset_tab(request, emp_id):
+    """
+    This function is used to view asset tab of an employee in employee individual view.
+
+    Parameters:
+    request (HttpRequest): The HTTP request object.
+    emp_id (int): The id of the employee.
+
+    Returns: return asset-tab template
+
+    """
+    employee = Employee.objects.get(id=emp_id)
+    assets_requests = employee.requested_employee.all()
+    assets = employee.allocated_employee.all()
+    assets_ids = (
+        json.dumps([instance.id for instance in assets]) if assets else json.dumps([])
+    )
+    context = {
+        "assets": assets,
+        "requests": assets_requests,
+        "assets_ids": assets_ids,
+        "employee": emp_id,
+    }
+    return render(request, "tabs/asset-tab.html", context=context)
+
+
+@login_required
+@hx_request_required
+def profile_asset_tab(request, emp_id):
+    """
+    This function is used to view asset tab of an employee in employee profile view.
+
+    Parameters:
+    request (HttpRequest): The HTTP request object.
+    emp_id (int): The id of the employee.
+
+    Returns: return profile-asset-tab template
+
+    """
+    employee = Employee.objects.get(id=emp_id)
+    assets = employee.allocated_employee.all()
+    assets_ids = json.dumps([instance.id for instance in assets])
+    context = {
+        "assets": assets,
+        "assets_ids": assets_ids,
+    }
+    return render(request, "tabs/profile-asset-tab.html", context=context)
+
+
+@login_required
+@hx_request_required
+def asset_request_tab(request, emp_id):
+    """
+    This function is used to view asset request tab of an employee in employee individual view.
+
+    Parameters:
+    request (HttpRequest): The HTTP request object.
+    emp_id (int): The id of the employee.
+
+    Returns: return asset-request-tab template
+
+    """
+    employee = Employee.objects.get(id=emp_id)
+    assets_requests = employee.requested_employee.all()
+    context = {"asset_requests": assets_requests, "emp_id": emp_id}
+    return render(request, "tabs/asset-request-tab.html", context=context)
+
+
+@login_required
+def dashboard_asset_request_approve(request):
+    """
+    Handles the asset request approval dashboard view.
+
+    This view fetches and filters asset requests that are currently in the
+    "Requested" status and belong to employees who are active. It further filters
+    the asset requests based on the subordinates of the logged-in user and the
+    specific permission 'asset.change_assetrequest'.
+
+    The filtered asset requests are then passed to the template for rendering,
+    along with a JSON-encoded list of the request IDs.
+    """
+
+    asset_requests = AssetRequest.objects.filter(
+        asset_request_status="Requested", requested_employee_id__is_active=True
+    )
+    asset_requests = filtersubordinates(
+        request,
+        asset_requests,
+        "asset.change_assetrequest",
+        field="requested_employee_id",
+    )
+    requests_ids = json.dumps([instance.id for instance in asset_requests])
+
+    return render(
+        request,
+        "request_and_approve/asset_requests_approve.html",
+        {
+            "asset_requests": asset_requests,
             "requests_ids": requests_ids,
         },
     )

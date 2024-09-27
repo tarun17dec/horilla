@@ -69,7 +69,7 @@ var reqAttendanceApproveMessages = {
   fr: "Voulez-vous vraiment approuver toutes les demandes de présence sélectionnées?",
 };
 
-var reqAttendanceApproveMessages = {
+var reqAttendanceRejectMessages = {
   ar: "هل ترغب حقًا في رفض جميع طلبات الحضور المحددة؟",
   de: "Möchten Sie wirklich alle ausgewählten Anwesenheitsanfragen ablehnen?",
   es: "¿Realmente quieres rechazar todas las solicitudes de asistencia seleccionadas?",
@@ -682,7 +682,7 @@ function unselectAllActivity() {
   });
 }
 
-$("#attendance-info-import").click(function (e) {
+$(".attendance-info-import").click(function (e) {
   e.preventDefault();
   var languageCode = null;
   getCurrentLanguageCode(function (code) {
@@ -896,53 +896,6 @@ $(".all-attendance-activity").change(function (e) {
   }
 });
 
-$("#attendanceImportForm").submit(function (e) {
-  e.preventDefault();
-
-  // Create a FormData object to send the file
-  $("#uploadContainer").css("display", "none");
-  $("#uploading").css("display", "block");
-  var formData = new FormData(this);
-
-  fetch("/attendance/attendance-info-import", {
-    method: "POST",
-    dataType: "binary",
-    body: formData,
-    processData: false,
-    contentType: false,
-    headers: {
-      // Include the CSRF token in the headers
-      "X-CSRFToken": "{{ csrf_token }}",
-    },
-    xhrFields: {
-      responseType: "blob",
-    },
-  })
-    .then((response) => {
-      if (response.ok) {
-        return response.blob(); // Use response.blob() to get the binary data
-      } else {
-        // Handle errors, e.g., show an error message
-      }
-    })
-    .then((blob) => {
-      if (blob) {
-        // Create a Blob from the binary data
-        const file = new Blob([blob], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        });
-        const url = URL.createObjectURL(file);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "ImportError.xlsx";
-        document.body.appendChild(link);
-        link.click();
-        window.location.href = "/attendance/attendance-view";
-      }
-    })
-    .catch((error) => {});
-});
-
 $("#validateAttendances").click(function (e) {
   e.preventDefault();
   var languageCode = null;
@@ -959,7 +912,7 @@ $("#validateAttendances").click(function (e) {
       });
     } else {
       Swal.fire({
-        text: confirmMessage,
+        text: "confirmMessage",
         icon: "info",
         showCancelButton: true,
         confirmButtonColor: "#008000",
@@ -1593,7 +1546,7 @@ $("#reqAttendanceBulkReject").click(function (e) {
   var languageCode = null;
   getCurrentLanguageCode(function (code) {
     languageCode = code;
-    var confirmMessage = reqAttendanceApproveMessages[languageCode];
+    var confirmMessage = reqAttendanceRejectMessages[languageCode];
     var textMessage = noRowValidateMessages[languageCode];
     var checkedRows = JSON.parse($("#selectedInstances").attr("data-ids") || "[]");
     if (checkedRows.length === 0) {

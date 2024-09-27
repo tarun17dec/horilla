@@ -18,15 +18,22 @@ from django.template.loader import render_to_string
 from django.utils.translation import gettext_lazy as _
 
 from base.forms import ModelForm as BaseForm
-from base.methods import reload_queryset
+from base.forms import ModelForm as MF
+from base.methods import (
+    filtersubordinatesemployeemodel,
+    is_reportingmanager,
+    reload_queryset,
+)
 from employee.filters import EmployeeFilter
-from employee.models import Department, JobPosition
+from horilla import horilla_middlewares
 from horilla_widgets.widgets.horilla_multi_select_field import HorillaMultiSelectField
 from horilla_widgets.widgets.select_widgets import HorillaMultiSelectWidget
 from pms.models import (
     AnonymousFeedback,
+    BonusPointSetting,
     Comment,
     Employee,
+    EmployeeBonusPoint,
     EmployeeKeyResult,
     EmployeeObjective,
     Feedback,
@@ -68,6 +75,17 @@ class ObjectiveForm(BaseForm):
         widget=forms.DateInput(attrs={"class": "oh-input w-100", "type": "date"}),
     )
     add_assignees = forms.BooleanField(required=False)
+    archive = forms.BooleanField(required=False)
+    key_result_id = forms.ModelMultipleChoiceField(
+        queryset=KeyResult.objects.all().exclude(archive=True),
+        label=_("Key result"),
+        widget=forms.SelectMultiple(
+            attrs={
+                "class": "oh-select oh-select-2 select2-hidden-accessible",
+                "onchange": "keyResultChange($(this))",
+            }
+        ),
+    )
 
     class Meta:
         """
@@ -85,16 +103,9 @@ class ObjectiveForm(BaseForm):
             "add_assignees",
             "assignees",
             "start_date",
+            "archive",
         ]
         exclude = ["is_active"]
-        widgets = {
-            "key_result_id": forms.SelectMultiple(
-                attrs={
-                    "class": "oh-select oh-select-2 select2-hidden-accessible",
-                    "onchange": "keyResultChange($(this))",
-                }
-            ),
-        }
 
     def __init__(self, *args, **kwargs):
         """
@@ -105,18 +116,32 @@ class ObjectiveForm(BaseForm):
             "employee", None
         )  # access the logged-in user's information
         super().__init__(*args, **kwargs)
-        if self.instance.pk is None:
-            self.fields["assignees"] = HorillaMultiSelectField(
-                queryset=Employee.objects.all(),
-                widget=HorillaMultiSelectWidget(
-                    filter_route_name="employee-widget-filter",
-                    filter_class=EmployeeFilter,
-                    filter_instance_contex_name="f",
-                    filter_template_path="employee_filters.html",
-                    required=False,
-                ),
-                label="Assignees",
-            )
+        self.fields["assignees"] = HorillaMultiSelectField(
+            queryset=Employee.objects.all(),
+            widget=HorillaMultiSelectWidget(
+                filter_route_name="employee-widget-filter",
+                filter_class=EmployeeFilter,
+                filter_instance_contex_name="f",
+                filter_template_path="employee_filters.html",
+                required=False,
+                instance=self.instance,
+            ),
+            label="Assignees",
+        )
+
+        self.fields["managers"] = HorillaMultiSelectField(
+            queryset=Employee.objects.all(),
+            widget=HorillaMultiSelectWidget(
+                filter_route_name="employee-widget-filter",
+                filter_class=EmployeeFilter,
+                filter_instance_contex_name="f",
+                filter_template_path="employee_filters.html",
+                required=False,
+                instance=self.instance,
+            ),
+            label="Managers",
+        )
+
         reload_queryset(self.fields)
         self.fields["key_result_id"].choices = list(
             self.fields["key_result_id"].choices
@@ -270,13 +295,91 @@ class EmployeeObjectiveForm(BaseForm):
         return table_html
 
 
+class EmployeeObjectiveCreateForm(BaseForm):
+    """
+    A form to create or update instances of the EmployeeObjective, model.
+    """
+
+    key_result_id = forms.ModelMultipleChoiceField(
+        queryset=KeyResult.objects.all().exclude(archive=True),
+        label=_("Key result"),
+        widget=forms.SelectMultiple(
+            attrs={
+                "class": "oh-select oh-select-2 select2-hidden-accessible",
+                "onchange": "keyResultChange($(this))",
+            }
+        ),
+    )
+    objective_id = forms.ModelChoiceField(
+        queryset=Objective.objects.all().exclude(archive=True),
+        required=True,
+        label=_("Objective"),
+    )
+
+    class Meta:
+        """
+        A nested class that specifies the model,fields and style of fields for the form.
+        """
+
+        model = EmployeeObjective
+        fields = [
+            "employee_id",
+            "objective_id",
+            "key_result_id",
+            "start_date",
+            "end_date",
+            "status",
+            "archive",
+        ]
+        exclude = ["is_active"]
+        widgets = {
+            "start_date": forms.DateInput(
+                attrs={"class": "oh-input w-100", "type": "date"}
+            ),
+            "end_date": forms.DateInput(
+                attrs={"class": "oh-input w-100", "type": "date"}
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = getattr(horilla_middlewares._thread_locals, "request", None)
+
+        if request.user.has_perm("pms.add_keyresult") or is_reportingmanager(request):
+            self.fields["key_result_id"].choices = list(
+                self.fields["key_result_id"].choices
+            )
+            self.fields["key_result_id"].choices.append(
+                ("create_new_key_result", "Create new Key result")
+            )
+        if request.user.has_perm("pms.add_employeeobjective") or is_reportingmanager(
+            request
+        ):
+            employees = filtersubordinatesemployeemodel(
+                request,
+                queryset=Employee.objects.filter(is_active=True),
+                perm="pms.add_employeeobjective",
+            )
+            self.fields["employee_id"].queryset = employees | Employee.objects.filter(
+                employee_user_id=request.user
+            )
+
+    def as_p(self):
+        """
+        Render the form fields as HTML table rows with Bootstrap styling.
+        """
+        context = {"form": self}
+        table_html = render_to_string("common_form.html", context)
+        return table_html
+
+
 class EmployeeKeyResultForm(BaseForm):
     """
     A form to create or update instances of the EmployeeKeyResult, model.
     """
 
     key_result_id = forms.ModelChoiceField(
-        queryset=KeyResult.objects.all(),
+        queryset=KeyResult.objects.all().exclude(archive=True),
         label=_("Key result"),
         widget=forms.Select(
             attrs={
@@ -355,11 +458,18 @@ class KRForm(MF):
         """
 
         model = KeyResult
-        fields = "__all__"
+        fields = [
+            "title",
+            "description",
+            "progress_type",
+            "target_value",
+            "duration",
+            "company_id",
+            "archive",
+        ]
         exclude = [
             "history",
             "objects",
-            "is_active",
         ]
 
     def as_p(self):
@@ -586,8 +696,7 @@ class FeedbackForm(ModelForm):
             ),
             "employee_id": forms.Select(
                 attrs={
-                    "class": " oh-select--employee-change",
-                    "style": "width:100%; display:none;",
+                    "class": "oh-select oh-select-2",
                     "required": "false",
                 },
             ),
@@ -610,6 +719,7 @@ class FeedbackForm(ModelForm):
                     "class": "oh-select oh-select-2 w-100",
                     "multiple": "multiple",
                     "style": "width:100%; display:none;",
+                    "required": "false",
                 }
             ),
             "question_template_id": forms.Select(
@@ -642,41 +752,65 @@ class FeedbackForm(ModelForm):
         Initializes the feedback form instance.
         If an instance is provided, sets the initial value for the form's date fields.
         """
-
+        # fetch request
+        request = getattr(horilla_middlewares._thread_locals, "request", None)
+        # get instance
         instance = kwargs.get("instance")
-        employee = kwargs.pop(
-            "employee", None
-        )  # access the logged-in user's information
+        # set employee
+        if instance:
+            employee = instance.employee_id
+        else:
+            employee = request.user.employee_get
+
         if instance:
             kwargs["initial"] = set_date_field_initial(instance)
         super().__init__(*args, **kwargs)
-        reload_queryset(self.fields)
-        self.fields["period"].choices = list(self.fields["period"].choices)
-        self.fields["period"].choices.append(("create_new_period", "Create new period"))
 
-        if instance:
-            self.fields["employee_id"].widget.attrs.update(
-                {"class": "oh-select oh-select-2"}
-            )
-        employees = Employee.objects.filter(
-            is_active=True, employee_work_info__reporting_manager_id=employee
+        # Horilla multi select filter for employee
+        self.fields["subordinate_id"] = HorillaMultiSelectField(
+            queryset=Employee.objects.all(),
+            widget=HorillaMultiSelectWidget(
+                filter_route_name="employee-widget-filter",
+                filter_class=EmployeeFilter,
+                filter_instance_contex_name="f",
+                filter_template_path="employee_filters.html",
+                instance=self.instance,
+                required=False,
+            ),
+            label="Subordinates",
         )
-        if employee and employees:
-            department = employee.employee_work_info.department_id
-            employees = Employee.objects.filter(
-                is_active=True, employee_work_info__department_id=department
+        reload_queryset(self.fields)
+
+        # check the request user has permission to add period
+        if request.user.has_perm("pms.add_period") or is_reportingmanager(request):
+            # add dyanamic period creation as choice
+            self.fields["period"].choices = list(self.fields["period"].choices)
+            self.fields["period"].choices.append(
+                ("create_new_period", "Create new period")
             )
-            # manager level access
-            self.fields["employee_id"].queryset = employees
-            self.fields["manager_id"].queryset = employees
-            self.fields["colleague_id"].queryset = employees
-            self.fields["subordinate_id"].queryset = employees
+        # add onchange function to get employee data
+        self.fields["employee_id"].widget.attrs.update(
+            {"onchange": "get_collegues($(this))"}
+        )
+        # filtering employees accordig to the request user
+        if request.user.has_perm("pms.add_feedback") or is_reportingmanager(request):
+            # Queryset of subordinate employees
+            employees = filtersubordinatesemployeemodel(
+                request, Employee.objects.all(), perm="pms.add_feedback"
+            )
+            self.fields["employee_id"].queryset = employees | Employee.objects.filter(
+                employee_user_id=request.user
+            )
+            if not instance:
+                self.fields["employee_id"].initial = employee
 
     def clean(self):
         """
         Cleans and validates the feedback form data.
         Ensures that the start date is before the end date and validates the start date.
         """
+        super().clean()
+        self.errors.pop("subordinate_id", None)
         cleaned_data = super().clean()
         start_date = cleaned_data.get("start_date")
         end_date = cleaned_data.get("end_date")
@@ -923,7 +1057,7 @@ class MeetingsForm(BaseForm):
         Render the form fields as HTML table rows with Bootstrap styling.
         """
         context = {"form": self}
-        table_html = render_to_string("attendance_form.html", context)
+        table_html = render_to_string("horilla_form.html", context)
         return table_html
 
     def clean(self):
@@ -941,24 +1075,32 @@ class MeetingsForm(BaseForm):
             ids = self.data.getlist("employee_id")
             if ids:
                 self.errors.pop("employee_id", None)
+
+        if cleaned_data["answer_employees"] and not cleaned_data["question_template"]:
+            raise ValidationError(
+                {
+                    "question_template": _(
+                        "Question template is required when answer employees are choosed"
+                    )
+                }
+            )
+
         return cleaned_data
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if self.instance.pk:
-            employees = Employee.objects.filter(id__in=self.instance.employee_id.all())
-            self.fields["answer_employees"].queryset = employees
-        else:
-            self.fields["employee_id"] = HorillaMultiSelectField(
-                queryset=Employee.objects.filter(employee_work_info__isnull=False),
-                widget=HorillaMultiSelectWidget(
-                    filter_route_name="employee-widget-filter",
-                    filter_class=EmployeeFilter,
-                    filter_instance_contex_name="f",
-                    filter_template_path="employee_filters.html",
-                ),
-                label=_("Employees"),
-            )
+        self.fields["employee_id"] = HorillaMultiSelectField(
+            queryset=Employee.objects.filter(employee_work_info__isnull=False),
+            widget=HorillaMultiSelectWidget(
+                filter_route_name="employee-widget-filter",
+                filter_class=EmployeeFilter,
+                filter_instance_contex_name="f",
+                filter_template_path="employee_filters.html",
+                form=self,
+                instance=self.instance,
+            ),
+            label=_("Employees"),
+        )
         try:
             if self.data.getlist("employee_id"):
                 employees = Employee.objects.filter(
@@ -967,3 +1109,69 @@ class MeetingsForm(BaseForm):
                 self.fields["answer_employees"].queryset = employees
         except:
             pass
+
+
+class BonusPointSettingForm(MF):
+    """
+    BonusPointSetting form
+    """
+
+    model = forms.ChoiceField(
+        choices=BonusPointSetting.MODEL_CHOICES,
+        widget=forms.Select(
+            attrs={
+                "onchange": "ModelChange($(this))",
+            }
+        ),
+    )
+
+    class Meta:
+        model = BonusPointSetting
+        fields = "__all__"
+
+    def clean(self):
+        cleaned_data = super().clean()
+        model = cleaned_data.get("model")
+
+        if model in ["pms.models.EmployeeObjective", "pms.models.EmployeeKeyResult"]:
+            if not cleaned_data.get("applicable_for") == "owner":
+                raise ValidationError(
+                    _(
+                        f"Model Doesn't have this {cleaned_data.get('applicable_for')} field"
+                    )
+                )
+            if not cleaned_data["bonus_for"] == "Closed":
+                raise ValidationError(
+                    _(f"This 'Bonus for' is not in the Model's status")
+                )
+        if model in ["project.models.Task", "project.models.Project"]:
+            if cleaned_data.get("applicable_for") == "owner":
+                raise ValidationError(
+                    _(
+                        f"Model Doesn't have this {cleaned_data.get('applicable_for')} field"
+                    )
+                )
+        if cleaned_data["points"] <= 0:
+            raise ValidationError(_("Bonus point must be greater than zero"))
+
+        return cleaned_data
+
+
+class EmployeeBonusPointForm(MF):
+    """
+    EmployeeBonusPoint form
+    """
+
+    class Meta:
+        model = EmployeeBonusPoint
+        fields = "__all__"
+        exclude = ["bonus_point_id", "instance", "is_active"]
+
+    def __init__(self, *args, **kwargs):
+        request = getattr(horilla_middlewares._thread_locals, "request", None)
+        super().__init__(*args, **kwargs)
+        if request.GET.get("employee_id"):
+            employee = Employee.objects.filter(id=request.GET["employee_id"])
+            if employee:
+                self.fields["employee_id"].queryset = employee
+                self.initial["employee_id"] = employee.first()

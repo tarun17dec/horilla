@@ -10,12 +10,20 @@ from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.translation import gettext as _
+from django.views.decorators.http import require_http_methods
 from haystack.query import SearchQuerySet
 
 from base.forms import TagsForm
-from base.methods import filtersubordinates, get_key_instances, get_pagination, sortby
+from base.methods import (
+    filtersubordinates,
+    get_key_instances,
+    get_pagination,
+    is_reportingmanager,
+    sortby,
+)
 from base.models import Department, JobPosition, Tags
 from employee.models import Employee
+from helpdesk.decorators import ticket_owner_can_enter
 from helpdesk.filter import FAQCategoryFilter, FAQFilter, TicketFilter, TicketReGroup
 from helpdesk.forms import (
     AttachmentForm,
@@ -44,7 +52,6 @@ from horilla.decorators import (
     hx_request_required,
     login_required,
     manager_can_enter,
-    owner_can_enter,
     permission_required,
 )
 from horilla.group_by import group_by_queryset
@@ -370,8 +377,8 @@ def ticket_view(request):
     Parameters:
         request (HttpRequest): The HTTP request object.
     """
-    tickets = Ticket.objects.filter(is_active=True)
-
+    tickets = Ticket.objects.filter(is_active=True).order_by("-created_date")
+    employee = request.user.employee_get
     previous_data = request.GET.urlencode()
     if request.method == "GET":
         tickets = TicketFilter(request.GET).qs
@@ -379,13 +386,12 @@ def ticket_view(request):
     all_page_number = request.GET.get("all_page")
     allocated_page_number = request.GET.get("allocated_page")
 
-    my_tickets = tickets.filter(
-        is_active=True, employee_id=request.user.employee_get
-    ).order_by("-created_date")
-
-    all_tickets = tickets.filter(is_active=True).order_by("-created_date")
-    all_tickets = filtersubordinates(request, all_tickets, "helpdesk.add_tickets")
-
+    my_tickets = tickets.filter(employee_id=employee) | tickets.filter(
+        created_by=request.user
+    )
+    all_tickets = []
+    if is_reportingmanager(request) or request.user.has_perm("helpdesk.view_ticket"):
+        all_tickets = filtersubordinates(request, tickets, "helpdesk.add_tickets")
     allocated_tickets = []
     ticket_list = tickets.filter(is_active=True)
     user = request.user.employee_get
@@ -483,7 +489,7 @@ def ticket_create(request):
 
 @login_required
 @hx_request_required
-@owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
+@ticket_owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
 def ticket_update(request, ticket_id):
     """
     This function is responsible for updating the Ticket.
@@ -542,7 +548,7 @@ def ticket_archive(request, ticket_id):
 
 
 @login_required
-@owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
+@ticket_owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
 def change_ticket_status(request, ticket_id):
     """
     This function is responsible for changing the Ticket status.
@@ -614,7 +620,7 @@ def change_ticket_status(request, ticket_id):
 
 
 @login_required
-@owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
+@ticket_owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
 def ticket_delete(request, ticket_id):
     """
     This function is responsible for deleting the Ticket.
@@ -789,7 +795,7 @@ def ticket_filter(request):
 
 
 @login_required
-@owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
+@ticket_owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
 def ticket_detail(request, ticket_id, **kwargs):
     today = datetime.now().date()
     ticket = Ticket.objects.get(id=ticket_id)
@@ -850,7 +856,7 @@ def ticket_detail(request, ticket_id, **kwargs):
 
 
 @login_required
-# @owner_can_enter("perms.helpdesk.helpdesk_changeticket", Ticket)
+# @ticket_owner_can_enter("perms.helpdesk.helpdesk_changeticket", Ticket)
 def ticket_update_tag(request):
     """
     method to update the tags of ticket
@@ -871,7 +877,7 @@ def ticket_update_tag(request):
 
 @login_required
 @hx_request_required
-@owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
+@ticket_owner_can_enter(perm="helpdesk.change_ticket", model=Ticket)
 def ticket_change_raised_on(request, ticket_id):
     ticket = Ticket.objects.get(id=ticket_id)
     form = TicketRaisedOnForm(instance=ticket)
@@ -1136,7 +1142,7 @@ def tickets_bulk_archive(request):
 
 
 @login_required
-# @owner_can_enter("perms.helpdesk.helpdesk_changeticket", Ticket)
+# @ticket_owner_can_enter("perms.helpdesk.helpdesk_changeticket", Ticket)
 @permission_required("helpdesk.delete_ticket")
 def tickets_bulk_delete(request):
     """
@@ -1263,3 +1269,97 @@ def update_priority(request, ticket_id):
     ti.save()
     messages.success(request, _("Priority updated successfully."))
     return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+
+
+@login_required
+@permission_required("helpdesk.view_tickettype")
+def ticket_type_view(request):
+    """
+    This method is used to show Ticket type
+    """
+    ticket_types = TicketType.objects.all()
+    return render(
+        request, "base/ticket_type/ticket_type.html", {"ticket_types": ticket_types}
+    )
+
+
+@login_required
+# @hx_request_required
+@permission_required("helpdesk.create_tickettype")
+def ticket_type_create(request):
+    """
+    This method renders form and template to create Ticket type
+    """
+    form = TicketTypeForm()
+    if request.method == "POST":
+        form = TicketTypeForm(request.POST)
+        if request.GET.get("ajax"):
+            if form.is_valid():
+                instance = form.save()
+                response = {
+                    "errors": "no_error",
+                    "ticket_id": instance.id,
+                    "title": instance.title,
+                }
+                return JsonResponse(response)
+
+            errors = form.errors.as_json()
+            return JsonResponse({"errors": errors})
+        if form.is_valid():
+            form.save()
+            form = TicketTypeForm()
+            messages.success(request, _("Ticket type has been created successfully!"))
+            return HttpResponse("<script>window.location.reload()</script>")
+    return render(
+        request,
+        "base/ticket_type/ticket_type_form.html",
+        {
+            "form": form,
+        },
+    )
+
+
+@login_required
+@hx_request_required
+@permission_required("helpdesk.update_tickettype")
+def ticket_type_update(request, t_type_id):
+    """
+    This method renders form and template to create Ticket type
+    """
+    ticket_type = TicketType.objects.get(id=t_type_id)
+    form = TicketTypeForm(instance=ticket_type)
+    if request.method == "POST":
+        form = TicketTypeForm(request.POST, instance=ticket_type)
+        if form.is_valid():
+            form.save()
+            form = TicketTypeForm()
+            messages.success(request, _("Ticket type has been updated successfully!"))
+            return HttpResponse("<script>window.location.reload()</script>")
+    return render(
+        request,
+        "base/ticket_type/ticket_type_form.html",
+        {"form": form, "t_type_id": t_type_id},
+    )
+
+
+@login_required
+@require_http_methods(["POST", "DELETE"])
+@permission_required("helpdesk.delete_tickettype")
+def ticket_type_delete(request, t_type_id):
+    ticket_type = TicketType.find(t_type_id)
+    if ticket_type:
+        ticket_type.delete()
+        messages.success(request, _("Ticket type has been deleted successfully!"))
+    else:
+        messages.error(request, _("Ticket type not found"))
+    return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+
+
+@login_required
+def view_department_managers(request):
+    department_managers = DepartmentManager.objects.all()
+
+    context = {
+        "department_managers": department_managers,
+    }
+    return render(request, "department_managers/department_managers.html", context)

@@ -101,6 +101,7 @@
 							name="files"
 							class="d-none"
 							multiple="true"
+							accept=".jpg, .jpeg, .png, .pdf"
 							id="addFile_{{comment.id}}"
 							onchange="submitForm(this)"
 						/>
@@ -136,7 +137,7 @@
 				>
 				<img
 					style="display: block; width: 100px; margin: 20px auto"
-					src="/static/images/ui/comment.png"
+					src="{% static "/images/ui/comment.png" %}"
 					class=""
 				/>
 			</div>

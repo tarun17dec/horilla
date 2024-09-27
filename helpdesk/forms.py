@@ -27,6 +27,7 @@ from django import forms
 from django.template.loader import render_to_string
 
 from base.forms import ModelForm
+from base.methods import is_reportingmanager
 from base.models import Department, JobPosition
 from employee.forms import MultipleFileField
 from employee.models import Employee
@@ -39,6 +40,7 @@ from helpdesk.models import (
     Ticket,
     TicketType,
 )
+from horilla import horilla_middlewares
 
 
 class TicketTypeForm(ModelForm):
@@ -53,7 +55,7 @@ class TicketTypeForm(ModelForm):
         Render the form fields as HTML table rows with Bootstrap styling.
         """
         context = {"form": self}
-        table_html = render_to_string("attendance_form.html", context)
+        table_html = render_to_string("horilla_form.html", context)
         return table_html
 
 
@@ -111,7 +113,7 @@ class TicketForm(ModelForm):
         Render the form fields as HTML table rows with Bootstrap styling.
         """
         context = {"form": self}
-        table_html = render_to_string("attendance_form.html", context)
+        table_html = render_to_string("horilla_form.html", context)
         return table_html
 
     def __init__(self, *args, **kwargs):
@@ -122,9 +124,11 @@ class TicketForm(ModelForm):
         self.fields["tags"].choices = list(self.fields["tags"].choices)
         self.fields["tags"].choices.append(("create_new_tag", "Create new tag"))
         self.fields["ticket_type"].choices = list(self.fields["ticket_type"].choices)
-        self.fields["ticket_type"].choices.append(
-            ("create_new_ticket_type", "Create new ticket type")
-        )
+        request = getattr(horilla_middlewares._thread_locals, "request", None)
+        if is_reportingmanager(request):
+            self.fields["ticket_type"].choices.append(
+                ("create_new_ticket_type", "Create new ticket type")
+            )
 
 
 class TicketTagForm(ModelForm):

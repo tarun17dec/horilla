@@ -2,6 +2,7 @@ APScheduler
 arabic-reshaper
 asgiref
 asn1crypto
+bs4
 certifi
 cffi
 chardet
@@ -16,6 +17,7 @@ django-cors-headers
 django-environ
 django-filter
 django-haystack
+django-import-export
 django-jsonfield
 django-mathfilters
 django-model-utils
@@ -23,6 +25,7 @@ django-simple-history
 django-widget-tweaks
 et-xmlfile
 html5lib
+Jinja2
 idna
 lxml
 numpy
@@ -40,6 +43,7 @@ python-bidi
 python-dateutil
 pytz
 PyYAML
+pyzk==0.9
 qrcode
 reportlab==4.0.9
 requests
@@ -62,4 +66,3 @@ XlsxWriter
 gunicorn
 psycopg2-binary
 whitenoise
-pyzk==0.9

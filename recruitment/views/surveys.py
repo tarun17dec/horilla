@@ -6,23 +6,31 @@ This module is used to write views related to the survey features
 
 import json
 from datetime import datetime
+from uuid import uuid4
 
 from django.contrib import messages
 from django.core import serializers
 from django.core.files.storage import default_storage
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.models import ProtectedError
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import redirect, render
 from django.utils.translation import gettext_lazy as _
 
 from base.methods import closest_numbers, get_pagination
-from horilla.decorators import hx_request_required, login_required, permission_required
+from horilla.decorators import (
+    hx_request_required,
+    is_recruitment_manager,
+    login_required,
+    permission_required,
+)
 from recruitment.filters import SurveyFilter
 from recruitment.forms import (
     AddQuestionForm,
     ApplicationForm,
     QuestionForm,
     SurveyForm,
+    SurveyPreviewForm,
     TemplateForm,
 )
 from recruitment.models import (
@@ -31,6 +39,7 @@ from recruitment.models import (
     Recruitment,
     RecruitmentSurvey,
     RecruitmentSurveyAnswer,
+    Resume,
     Stage,
     SurveyTemplate,
 )
@@ -46,6 +55,56 @@ def survey_form(request):
     recruitment = Recruitment.objects.get(id=recruitment_id)
     form = SurveyForm(recruitment=recruitment).form
     return render(request, "survey/form.html", {"form": form})
+
+
+def survey_preview(request, title):
+    """
+    Used to render survey form to the candidate
+    """
+    # title = request.GET.get("title")
+    template = SurveyTemplate.objects.get(title=str(title))
+
+    form = SurveyPreviewForm(template=template).form
+    return render(
+        request,
+        "survey/survey_preview.html",
+        {"form": form, "template": template},
+    )
+
+
+from django.views.decorators.csrf import csrf_exempt
+
+
+@csrf_exempt
+def question_order_update(request):
+    if request.method == "POST":
+        # Extract data from the request
+        question_id = request.POST.get("question_id")
+        new_position = int(request.POST.get("new_position"))
+        qs = RecruitmentSurvey.objects.get(id=question_id)
+
+        print("____OLD POSITION______")
+        print(qs.sequence)
+        print("____NEW POSITION______")
+        print(new_position)
+
+        if qs.sequence > new_position:
+            new_position = new_position
+        if qs.sequence <= new_position:
+            new_position = new_position - 1
+
+        old_qs = RecruitmentSurvey.objects.filter(sequence=new_position)
+        for i in old_qs:
+
+            i.sequence = new_position + 1
+            i.save()
+        qs.sequence = int(new_position)
+        qs.save()
+        return JsonResponse(
+            {"success": True, "message": "Question order updated successfully"}
+        )
+
+    return JsonResponse({"error": "Invalid request method"}, status=405)
 
 
 def candidate_survey(request):
@@ -130,12 +189,21 @@ def candidate_survey(request):
 
 
 @login_required
-@permission_required(perm="recruitment.view_recruitmentsurvey")
+@is_recruitment_manager(perm="recruitment.view_recruitmentsurvey")
 def view_question_template(request):
     """
     This method is used to view the question template
     """
-    questions = RecruitmentSurvey.objects.all()
+    recs = Recruitment.objects.all()
+    ids = []
+    for i in recs:
+        for manager in i.recruitment_managers.all():
+            if request.user.employee_get == manager:
+                ids.append(i.id)
+    if request.user.has_perm("view_recruitmentsurvey"):
+        questions = RecruitmentSurvey.objects.all()
+    else:
+        questions = RecruitmentSurvey.objects.filter(recruitment_ids__in=ids)
     templates = group_by_queryset(
         questions.filter(template_id__isnull=False).distinct(),
         "template_id__title",
@@ -269,11 +337,27 @@ def application_form(request):
     form = ApplicationForm()
     recruitment = None
     recruitment_id = request.GET.get("recruitmentId")
+    resume_id = request.GET.get("resumeId")
+    resume_obj = Resume.objects.filter(id=resume_id).first()
+
+    if resume_obj:
+        initial_data = {"resume": resume_obj.file.url if resume_obj else None}
+        form = ApplicationForm(initial=initial_data)
+
     if recruitment_id is not None:
         recruitment = Recruitment.objects.filter(id=recruitment_id)
         if recruitment.exists():
             recruitment = recruitment.first()
     if request.POST:
+
+        if "resume" not in request.FILES and resume_id:
+            if resume_obj and resume_obj.file:
+                file_content = resume_obj.file.read()
+                pdf_file = SimpleUploadedFile(
+                    resume_obj.file.name, file_content, content_type="application/pdf"
+                )
+                request.FILES["resume"] = pdf_file
+
         form = ApplicationForm(request.POST, request.FILES)
         if form.is_valid():
             candidate_obj = form.save(commit=False)
@@ -285,31 +369,46 @@ def application_form(request):
                 candidate_obj.stage_id = stages.order_by("sequence").first()
             messages.success(request, _("Application saved."))
 
-            resume = request.FILES["resume"]
-            profile = request.FILES["profile"]
+            resume = request.FILES.get("resume")
+            if resume:
+                resume_path = f"recruitment/resume/{resume.name}"
 
-            resume_path = f"recruitment/resume/{resume.name}"
-            profile_path = f"recruitment/profile/{profile.name}"
+                with default_storage.open(resume_path, "wb+") as destination:
+                    for chunk in resume.chunks():
+                        destination.write(chunk)
 
-            with default_storage.open(resume_path, "wb+") as destination:
-                for chunk in resume.chunks():
-                    destination.write(chunk)
-
-            with default_storage.open(profile_path, "wb+") as destination:
-                for chunk in profile.chunks():
-                    destination.write(chunk)
-
-            candidate_obj.resume = resume_path
-            candidate_obj.profile = profile_path
-
+                candidate_obj.resume = resume_path
+            try:
+                profile = request.FILES["profile"] if request.FILES["profile"] else None
+                profile_path = f"recruitment/profile/{candidate_obj.name.replace(' ', '_')}_{profile.name}_{uuid4()}"
+                with default_storage.open(profile_path, "wb+") as destination:
+                    for chunk in profile.chunks():
+                        destination.write(chunk)
+                candidate_obj.profile = profile_path
+            except:
+                pass
             request.session["candidate"] = serializers.serialize(
                 "json", [candidate_obj]
             )
             if RecruitmentSurvey.objects.filter(
                 recruitment_ids=recruitment_id
             ).exists():
-                return redirect(candidate_survey)
+                try:
+                    employee = request.user.employee_get
+                    if (
+                        not request.user.has_perm("perms.recruitment.add_candidate")
+                        or employee not in recruitment.recruitment_managers.all()
+                        or not employee.stage_set.filter(recruitment_id=recruitment)
+                    ):
+                        return redirect(candidate_survey)
+                except:
+                    return redirect(candidate_survey)
             candidate_obj.save()
+
+            if resume_obj:
+                resume_obj.is_candidate = True
+                resume_obj.save()
+
             return render(request, "candidate/success.html")
         form.fields["job_position_id"].queryset = (
             form.instance.recruitment_id.open_positions.all()
@@ -317,13 +416,13 @@ def application_form(request):
     return render(
         request,
         "candidate/application_form.html",
-        {"form": form, "recruitment": recruitment},
+        {"form": form, "recruitment": recruitment, "resume": resume_obj},
     )
 
 
 @login_required
 @hx_request_required
-@permission_required(perm="recruitment.view_recruitmentsurvey")
+@is_recruitment_manager(perm="recruitment.view_recruitmentsurvey")
 def single_survey(request, survey_id):
     """
     This view method is used to single view of question template

@@ -71,7 +71,28 @@
       {% if perms.pms.view_objective or manager %}
         <li class="oh-tabs__tab" onclick="switchTab(event)" data-target="#all_objective">
             {% trans "All Objective" %}
+            <div style="align-items:center;display:flex">
             <span class="oh-badge oh-badge--secondary oh-badge--small oh-badge--round ms-2 mr-2" id="" data-category-id="1" title="{{objectives.paginator.count}} objectives" onclick="event.stopPropagation()">{{objectives.paginator.count}}</span>
+            {% if perms.pms.add_objectives or  request.user|is_reportingmanager  %}
+                <button onclick="event.stopPropagation()" style="display: inline-block;padding: 0px;
+                    border-radius: 6px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 50px;
+                    height: 28px;"
+                    class="oh-btn oh-btn--secondary-outline float-end ms-3"
+                    data-toggle="oh-modal-toggle"
+                    data-target="#objectCreateModal"
+                    hx-get="{%url 'objective-creation' %}"
+                    hx-target="#objectCreateModalTarget"
+                    onclick="event.preventDefault()"
+                    title="{% trans "Create Objectives" %}"
+                    >
+                    <ion-icon name="add-outline" class="m-0 md hydrated" role="img" aria-label="add outline"></ion-icon>
+                </button>
+            {% endif %}
+            </div>
         </li>
       {% endif %}
     </ul>
@@ -463,7 +484,7 @@
 
                                                             </div>
                                                             <div data-cell-index="2" class="oh-sticky-table__td">
-                                                                {% for kr in objective.key_result_id.all %}
+                                                                {% for kr in objective.employee_key_result.all %}
                                                                 <span class="oh-user-panel oh-collapse-panel" data-type="user">
                                                                     <div class="oh-profile oh-profile--md">
                                                                         <div class="oh-profile__avatar mr-1">
@@ -479,7 +500,7 @@
                                                                     </div>
                                                                 </span>
                                                                 {% endfor %}
-                                                                <span class="count-span">{{objective.key_result_id.all|length}} {% trans "Key results" %}</span>
+                                                                <span class="count-span">{{objective.employee_key_result.all|length}}{% trans "Key results" %}</span>
 
                                                             </div>
 

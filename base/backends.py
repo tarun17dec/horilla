@@ -5,12 +5,16 @@ This module is used to write email backends
 """
 
 import importlib
+import logging
 
+from django.core.mail import EmailMessage
 from django.core.mail.backends.smtp import EmailBackend
 
 from base.models import DynamicEmailConfiguration, EmailLog
 from horilla import settings
 from horilla.horilla_middlewares import _thread_locals
+
+logger = logging.getLogger(__name__)
 
 
 class DefaultHorillaMailBackend(EmailBackend):
@@ -37,9 +41,9 @@ class DefaultHorillaMailBackend(EmailBackend):
         ssl_certfile = (
             getattr(self.configuration, "ssl_certfile", None)
             if self.configuration
-            else ssl_keyfile or getattr(settings, "ssl_certfile", None)
+            else ssl_certfile or getattr(settings, "ssl_certfile", None)
         )
-        self.mail_sent_from = self.dynamic_username
+
         super().__init__(
             host=self.dynamic_host,
             port=self.dynamic_port,
@@ -94,15 +98,23 @@ class DefaultHorillaMailBackend(EmailBackend):
         )
 
     @property
+    def dynamic_mail_sent_from(self):
+        return (
+            self.configuration.from_email
+            if self.configuration
+            else getattr(settings, "DEFAULT_FROM_EMAIL", None)
+        )
+
+    @property
     def dynamic_display_name(self):
         return self.configuration.display_name if self.configuration else None
 
     @property
-    def dynamic_username_with_display_name(self):
+    def dynamic_from_email_with_display_name(self):
         return (
-            f"{self.dynamic_display_name} <{self.dynamic_username}>"
+            f"{self.dynamic_display_name} <{self.dynamic_mail_sent_from}>"
             if self.dynamic_display_name
-            else self.dynamic_username
+            else self.dynamic_mail_sent_from
         )
 
     @property
@@ -167,7 +179,7 @@ class ConfiguredEmailBackend(BACKEND_CLASS):
         for message in email_messages:
             email_log = EmailLog(
                 subject=message.subject,
-                from_email=self.mail_sent_from,
+                from_email=self.dynamic_from_email_with_display_name,
                 to=message.to,
                 body=message.body,
                 status="sent" if response else "failed",
@@ -177,9 +189,58 @@ class ConfiguredEmailBackend(BACKEND_CLASS):
 
 
 if EMAIL_BACKEND != default:
-    from_mail = getattr(settings, "EMAIL_HOST_USER", "example@gmail.com")
+    from_mail = getattr(settings, "DEFAULT_FROM_EMAIL", "example@gmail.com")
+    username = getattr(settings, "EMAIL_HOST_USER", "example@gmail.com")
     ConfiguredEmailBackend.dynamic_username = from_mail
-    ConfiguredEmailBackend.dynamic_username_with_display_name = from_mail
+    ConfiguredEmailBackend.dynamic_from_email_with_display_name = from_mail
 
 
 __all__ = ["ConfiguredEmailBackend"]
+
+
+message_init = EmailMessage.__init__
+
+
+def new_init(
+    self,
+    subject="",
+    body="",
+    from_email=None,
+    to=None,
+    bcc=None,
+    connection=None,
+    attachments=None,
+    headers=None,
+    cc=None,
+    reply_to=None,
+):
+    """
+    custom __init_method to override
+    """
+    request = getattr(_thread_locals, "request", None)
+
+    if request:
+        try:
+            display_email_name = f"{request.user.employee_get.get_full_name()} <{request.user.employee_get.email}>"
+            from_email = display_email_name if not from_email else from_email
+            reply_to = [display_email_name] if not reply_to else reply_to
+
+        except Exception as e:
+            logger.error(e)
+
+    message_init(
+        self,
+        subject=subject,
+        body=body,
+        from_email=from_email,
+        to=to,
+        bcc=bcc,
+        connection=connection,
+        attachments=attachments,
+        headers=headers,
+        cc=cc,
+        reply_to=reply_to,
+    )
+
+
+EmailMessage.__init__ = new_init

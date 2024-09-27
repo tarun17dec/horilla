@@ -23,12 +23,15 @@
             </button>
             <div class="oh-dropdown__menu oh-dropdown__menu--right" x-show="open" style="display: none;">
               <ul class="oh-dropdown__items">
-                {% if perms.recruitment.chane_surveytemplate %}
+                <li class="oh-dropdown__item">
+                  <a href="{% url 'survey-template-preview' grouper.grouper %}"  class="oh-dropdown__link">{% trans "Preview" %}</a>
+                </li>
+                {% if perms.recruitment.change_surveytemplate %}
                 <li class="oh-dropdown__item">
                   <a hx-get="{% url 'survey-template-question-add' %}?title={{grouper.grouper}}" hx-target="#templateModalBody" data-toggle="oh-modal-toggle" data-target="#templateModal" class="oh-dropdown__link">{% trans "Add Questions" %}</a>
                 </li>
                 {% endif %}
-                {% if perms.recruitment.chane_surveytemplate %}
+                {% if perms.recruitment.change_surveytemplate %}
                 <li class="oh-dropdown__item">
                   <a hx-get="{% url 'survey-template-create' %}?title={{grouper.grouper}}" hx-target="#templateModalBody" data-toggle="oh-modal-toggle" data-target="#templateModal" class="oh-dropdown__link">{% trans "Edit" %}</a>
                 </li>
@@ -60,10 +63,10 @@
               {% for question in grouper.list %}
               <div
                 class="oh-sticky-table__tr oh-multiple-table-sort__movable"
-                data-target="#detailSurvey"
+                data-target="#objectDetailsModal"
                 data-toggle="oh-modal-toggle"
                 hx-get="{% url 'single-survey-view' question.id %}?instances_ids={{requests_ids}}"
-                hx-target="#detailSurveyModalBody"
+                hx-target="#objectDetailsModalTarget"
               >
                 <div class="oh-sticky-table__sd">
                   <div class="oh-profile oh-profile--md">

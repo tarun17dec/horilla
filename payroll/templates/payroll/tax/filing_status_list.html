@@ -8,7 +8,7 @@
   </div>
   {% endfor %}
 <div class="oh-card" id="">
-  <div class="oh-accordion-meta">
+  <div class="oh-accordion-meta {% if request %}{% endif %}">
     <div class="">
       {% for filing_status in status %}
       <div
@@ -44,7 +44,7 @@
                 style="display: none"
               >
                 <ul class="oh-dropdown__items">
-                  {% if perms.payroll.add_taxbracket %}
+                  {% if perms.payroll.add_taxbracket and not filing_status.use_py %}
                   <li class="oh-dropdown__item">
                     <a
                       class="oh-dropdown__link oh-dropdown__link"

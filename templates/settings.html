@@ -1,4 +1,4 @@
-{% extends 'index.html' %} {% block content %} {% load static %} {% load i18n %}
+{% extends 'index.html' %} {% block content %} {% load static %} {% load i18n %} {% load horillafilters %}
 <style>
 	.settings-label {
 		font-weight: bold;
@@ -42,10 +42,7 @@
 					style="font-weight: bold"
 					id="mobileMenu"
 				>
-
-
 					<ul class="oh-inner-sidebar__items">
-
 						<li class="oh-inner-sidebar__item">
 							<div class="oh-accordion ms-2">
 								<div class="oh-accordion-header" style="font-size:16px;">
@@ -70,6 +67,16 @@
 														href="{% url 'employee-permission-assign' %}"
 														class="oh-inner-sidebar__link oh-dropdown__link"
 														>{% trans "Employee Permission" %}</a
+													>
+												{% endif %}
+											</div>
+											<div class="oh-input-group">
+												{% if perms.auth.view_permission %}
+													<a
+														id="defaultAccessibility"
+														href="{% url 'user-accessibility' %}"
+														class="oh-inner-sidebar__link oh-dropdown__link"
+														>{% trans "Accessibility Restriction" %}</a
 													>
 												{% endif %}
 											</div>
@@ -99,7 +106,7 @@
 														id="ticket_type"
 														href="{% url 'tag-view' %}"
 														class="oh-inner-sidebar__link oh-dropdown__link"
-														>{% trans "Audit Tags" %}</a
+														>{% trans "History Tags" %}</a
 													>
 												{% endif %}
 											</div>
@@ -110,6 +117,16 @@
 														href="{% url 'mail-server-conf' %}"
 														class="oh-inner-sidebar__link oh-dropdown__link"
 														>{% trans "Mail Server" %}</a
+													>
+												{% endif %}
+											</div>
+											<div class="oh-input-group">
+												{% if perms.base.view_dynamicemailconfiguration %}
+													<a
+														id="date"
+														{% comment %} href="{% url 'gdrive' %}" {% endcomment %}
+														class="oh-inner-sidebar__link oh-dropdown__link"
+														>{% trans "Gdrive Backup" %}</a
 													>
 												{% endif %}
 											</div>
@@ -160,16 +177,6 @@
 												{% endif %}
 											</div>
 											<div class="oh-input-group">
-												{% if perms.helpdesk.view_departmentmanager %}
-													<a
-														id="ticket_type"
-														href="{% url 'department-manager-view' %}"
-														class="oh-inner-sidebar__link oh-dropdown__link"
-														>{% trans "Department Managers" %}</a
-													>
-												{% endif %}
-											</div>
-											<div class="oh-input-group">
 												{% if perms.base.view_company %}
 													<a
 														id="company"
@@ -179,14 +186,13 @@
 													>
 												{% endif %}
 											</div>
-
 										</div>
 									</div>
 								</div>
 							</div>
 						</li>
 						<hr>
-
+						{% if "recruitment"|app_installed %}
 						<li class="oh-inner-sidebar__item">
 							<div class="oh-accordion ms-2">
 								<div class="oh-accordion-header" style="font-size:16px;">
@@ -197,12 +203,32 @@
 										<div class="row">
 										<div class="col-sm-12 col-md-12 col-lg-12">
 											<div class="oh-input-group">
+												{% if perms.recruitment.view_recruitment %}
+												<div class="oh-input-group">
+													<a
+														id="skills"
+														href="{% url 'self-tracking-feature' %}"
+														class="oh-inner-sidebar__link oh-dropdown__link"
+													>{% trans "Candidate Self Tracking" %}</a
+													>
+												</div>
+												{% endif %}
 												{% if perms.recruitment.view_rejectreason %}
 													<a
-														id="jobRole"
+														id="candidateRejectReasons"
 														href="{% url 'candidate-reject-reasons' %}"
 														class="oh-inner-sidebar__link oh-dropdown__link"
 														>{% trans "Candidate Reject Reason" %}</a
+													>
+												{% endif %}
+											</div>
+											<div class="oh-input-group">
+												{% if perms.recruitment.add_recruitment %}
+													<a
+														id="skills"
+														href="{% url 'skills-view' %}"
+														class="oh-inner-sidebar__link oh-dropdown__link"
+														>{% trans "Skills" %}</a
 													>
 												{% endif %}
 											</div>
@@ -213,6 +239,7 @@
 							</div>
 						</li>
 						<hr>
+						{% endif %}
 
 						<li class="oh-inner-sidebar__item">
 							<div class="oh-accordion ms-2">
@@ -284,12 +311,14 @@
 												{% endif %}
 											</div>
 											<div class="oh-input-group">
-												<a
-													id="date"
-													href="{% url 'action-type' %}"
-													class="oh-inner-sidebar__link oh-dropdown__link"
-													>{% trans "Disciplinary Action Type" %}</a
-												>
+												{% if perms.base.view_actiontype %}
+													<a
+														id="date"
+														href="{% url 'action-type' %}"
+														class="oh-inner-sidebar__link oh-dropdown__link"
+														>{% trans "Disciplinary Action Type" %}</a
+													>
+												{% endif %}
 											</div>
 											<div class="oh-input-group">
 												{% if perms.employee.view_emplyeetag %}
@@ -308,7 +337,7 @@
 							</div>
 						</li>
 						<hr>
-
+						{% if "attendance"|app_installed %}
 						<li class="oh-inner-sidebar__item">
 							<div class="oh-accordion ms-2">
 								<div class="oh-accordion-header" style="font-size:16px;">
@@ -318,6 +347,16 @@
 									<div class="oh-accordion-body">
 										<div class="row">
 										<div class="col-sm-12 col-md-12 col-lg-12">
+											<div class="oh-input-group">
+												{% if perms.attendance.view_attendancevalidationcondition %}
+													<a
+														id="trackLateComeEalryOut"
+														href="{% url 'track-late-come-early-out' %}"
+														class="oh-inner-sidebar__link oh-dropdown__link"
+														>{% trans "Track Late Come & Early Out" %}</a
+														>
+												{% endif %}
+											</div>
 											<div class="oh-input-group">
 												{% if perms.attendance.view_attendancevalidationcondition %}
 													<a
@@ -350,75 +389,167 @@
 													</div>
 												{% endif %}
 											{% endif %}
+
+											{% if perms.attendance.add_attendance %}
+												<div class="oh-input-group">
+													<a
+														id="ip_resriction"
+														href="{% url "allowed-ips" %}"
+														class="oh-inner-sidebar__link oh-dropdown__link"
+														>{% trans "IP Restriction" %}
+													</a>
+												</div>
+											{% endif %}
 										</div>
 									</div>
 								</div>
 							</div>
 						</li>
 						<hr>
-
-						<li class="oh-inner-sidebar__item">
-							<div class="oh-accordion ms-2">
-								<div class="oh-accordion-header" style="font-size:16px;">
-									<ion-icon name="close-circle-outline" class="me-2"></ion-icon>
-									{% trans "Leave" %}
-								</div>
+						{% endif %}
+						{% if "leave"|app_installed %}
+							<li class="oh-inner-sidebar__item">
+								<div class="oh-accordion ms-2">
+									<div class="oh-accordion-header" style="font-size:16px;">
+										<ion-icon name="close-circle-outline" class="me-2"></ion-icon>
+										{% trans "Leave" %}
+									</div>
 									<div class="oh-accordion-body">
 										<div class="row">
-										<div class="col-sm-12 col-md-12 col-lg-12">
-											<div class="oh-input-group">
-												{% if perms.attendance.view_attendancevalidationcondition %}
-													<a
-														id="condition"
-														href="{% url 'compensatory-leave-settings-view' %}"
-														class="oh-inner-sidebar__link oh-dropdown__link"
-														>{% trans "Compensatory Leave" %}</a
-													>
-												{% endif %}
+											<div class="col-sm-12 col-md-12 col-lg-12">
+												<div class="oh-input-group">
+													{% if perms.attendance.view_attendancevalidationcondition %}
+														<a
+															id="condition"
+															href="{% url 'employee-past-leave-restriction' %}"
+															class="oh-inner-sidebar__link oh-dropdown__link"
+															>{% trans "Restrictions" %}</a
+														>
+													{% endif %}
+												</div>
+											</div>
+											{% if "attendance"|app_installed %}
+												<div class="col-sm-12 col-md-12 col-lg-12">
+													<div class="oh-input-group">
+														{% if perms.attendance.view_attendancevalidationcondition %}
+															<a
+																id="condition"
+																href="{% url 'compensatory-leave-settings-view' %}"
+																class="oh-inner-sidebar__link oh-dropdown__link"
+																>{% trans "Compensatory Leave" %}</a
+															>
+														{% endif %}
+													</div>
+												</div>
+											{% endif %}
+										</div>
+									</div>
+								</div>
+							</li>
+							<hr>
+						{% endif %}
+						{% if "payroll"|app_installed %}
+							<li class="oh-inner-sidebar__item">
+								<div class="oh-accordion ms-2">
+									<div class="oh-accordion-header" style="font-size:16px;">
+										<ion-icon name="wallet-outline" class="me-2"></ion-icon>
+										{% trans "Payroll" %}
+									</div>
+										<div class="oh-accordion-body">
+											<div class="row">
+											<div class="col-sm-12 col-md-12 col-lg-12">
+												<div class="oh-input-group">
+													{% if perms.payroll.view_payslipautogenerate %}
+														<a
+															id="autoGeneratePayslip"
+															href="{% url 'auto-payslip-settings-view' %}"
+															class="oh-inner-sidebar__link oh-dropdown__link"
+															>{% trans "Payslip Auto Generation" %}</a
+														>
+													{% endif %}
+												</div>
 											</div>
 										</div>
 									</div>
 								</div>
-							</div>
-						</li>
-						<hr>
-
-						<li class="oh-inner-sidebar__item">
-							<div class="oh-accordion ms-2">
-								<div class="oh-accordion-header" style="font-size:16px;">
-									<ion-icon name="headset" class="me-2"></ion-icon>
-									{% trans "Help Desk" %}
-								</div>
-									<div class="oh-accordion-body">
-										<div class="row">
-										<div class="col-sm-12 col-md-12 col-lg-12">
-											<div class="oh-input-group">
-												{% if perms.helpdesk.view_tickettype %}
-													<a
-														id="ticket_type"
-														href="{% url 'ticket-type-view' %}"
-														class="oh-inner-sidebar__link oh-dropdown__link"
-														>{% trans "Ticket Type" %}</a
-													>
-												{% endif %}
+							</li>
+							<hr>
+						{% endif %}
+						{% if "pms"|app_installed %}
+							<li class="oh-inner-sidebar__item">
+								<div class="oh-accordion ms-2">
+									<div class="oh-accordion-header" style="font-size:16px;">
+										<ion-icon name="analytics-outline" class="me-2"></ion-icon>
+										{% trans "Performance" %}
+									</div>
+										<div class="oh-accordion-body">
+											<div class="row">
+											<div class="col-sm-12 col-md-12 col-lg-12">
+												<div class="oh-input-group">
+												{% if perms.pms.view_payslipautogenerate %}
+														<a
+															id="autoGeneratePayslip"
+															href="{% url 'bonus-point-setting' %}"
+															class="oh-inner-sidebar__link oh-dropdown__link"
+															>{% trans "Bonus Point Setting" %}</a
+														>
+													{% endif %}
+												</div>
 											</div>
-											<div class="oh-input-group">
-												{% if perms.employee.view_emplyeetag %}
-													<a
-														id="ticket_type"
-														href="{% url 'helpdesk-tag-view' %}"
-														class="oh-inner-sidebar__link oh-dropdown__link"
-														>{% trans "Helpdesk Tags" %}</a
-													>
-												{% endif %}
-											</div>
-
 										</div>
 									</div>
 								</div>
-							</div>
-						</li>
-						<hr>
+							</li>
+							<hr>
+						{% endif %}
+						{% if "helpdesk"|app_installed %}
+							<li class="oh-inner-sidebar__item">
+								<div class="oh-accordion ms-2">
+									<div class="oh-accordion-header" style="font-size:16px;">
+										<ion-icon name="headset" class="me-2"></ion-icon>
+										{% trans "Help Desk" %}
+									</div>
+										<div class="oh-accordion-body">
+											<div class="row">
+											<div class="col-sm-12 col-md-12 col-lg-12">
+												<div class="oh-input-group">
+													{% if perms.helpdesk.view_departmentmanager %}
+														<a
+															id="ticket_type"
+															href="{% url 'department-manager-view' %}"
+															class="oh-inner-sidebar__link oh-dropdown__link"
+															>{% trans "Department Managers" %}</a
+														>
+													{% endif %}
+												</div>
+												<div class="oh-input-group">
+													{% if perms.helpdesk.view_tickettype %}
+														<a
+															id="ticket_type"
+															href="{% url 'ticket-type-view' %}"
+															class="oh-inner-sidebar__link oh-dropdown__link"
+															>{% trans "Ticket Type" %}</a
+														>
+													{% endif %}
+												</div>
+												<div class="oh-input-group">
+													{% if perms.employee.view_emplyeetag %}
+														<a
+															id="ticket_type"
+															href="{% url 'helpdesk-tag-view' %}"
+															class="oh-inner-sidebar__link oh-dropdown__link"
+															>{% trans "Helpdesk Tags" %}</a
+														>
+													{% endif %}
+												</div>
+
+											</div>
+										</div>
+									</div>
+								</div>
+							</li>
+							<hr>
+						{% endif %}
 
 					</ul>
 				</div>

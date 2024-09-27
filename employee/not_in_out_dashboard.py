@@ -8,6 +8,7 @@ import json
 from datetime import date
 
 from django import template
+from django.apps import apps
 from django.contrib import messages
 from django.core.mail import EmailMessage
 from django.core.paginator import Paginator
@@ -15,12 +16,12 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
 
 from base.backends import ConfiguredEmailBackend
-from base.methods import generate_pdf
+from base.methods import export_data, generate_pdf
+from base.models import HorillaMailTemplate
 from employee.filters import EmployeeFilter
 from employee.models import Employee
 from horilla import settings
 from horilla.decorators import login_required, manager_can_enter
-from recruitment.models import RecruitmentMailTemplate
 
 
 def paginator_qry(qryset, page_number):
@@ -83,7 +84,7 @@ def send_mail(request, emp_id=None):
         employee = Employee.objects.get(id=emp_id)
     employees = Employee.objects.all()
 
-    templates = RecruitmentMailTemplate.objects.all()
+    templates = HorillaMailTemplate.objects.all()
     return render(
         request,
         "employee/send_mail.html",
@@ -92,11 +93,81 @@ def send_mail(request, emp_id=None):
 
 
 @login_required
+@manager_can_enter("employee.change_employee")
+def employee_data_export(request, emp_id=None):
+    """
+    This method used send mail to the employees
+    """
+
+    resolver_match = request.resolver_match
+    if (
+        resolver_match
+        and resolver_match.url_name
+        and resolver_match.url_name == "export-data-employee"
+    ):
+        employee = None
+        if emp_id:
+            employee = Employee.objects.get(id=emp_id)
+
+        context = {"employee": employee}
+
+        # IF LEAVE IS INSTALLED
+        if apps.is_installed("leave"):
+            from leave.filters import LeaveRequestFilter
+            from leave.forms import LeaveRequestExportForm
+
+            excel_column = LeaveRequestExportForm()
+            export_filter = LeaveRequestFilter()
+            context.update(
+                {
+                    "leave_excel_column": excel_column,
+                    "leave_export_filter": export_filter.form,
+                }
+            )
+
+        # IF ATTENDANCE IS INSTALLED
+        if apps.is_installed("attendance"):
+            from attendance.filters import AttendanceFilters
+            from attendance.forms import AttendanceExportForm
+            from attendance.models import Attendance
+
+            excel_column = AttendanceExportForm()
+            export_filter = AttendanceFilters()
+            context.update(
+                {
+                    "attendance_excel_column": excel_column,
+                    "attendance_export_filter": export_filter.form,
+                }
+            )
+
+        # IF PAYROLL IS INSTALLED
+        if apps.is_installed("payroll"):
+            from payroll.filters import PayslipFilter
+            from payroll.forms.component_forms import PayslipExportColumnForm
+
+            context.update(
+                {
+                    "payroll_export_column": PayslipExportColumnForm(),
+                    "payroll_export_filter": PayslipFilter(request.GET),
+                }
+            )
+
+        return render(request, "employee/export_data_employee.html", context=context)
+    return export_data(
+        request=request,
+        model=Attendance,
+        filter_class=AttendanceFilters,
+        form_class=AttendanceExportForm,
+        file_name="Attendance_export",
+    )
+
+
+@login_required
 def get_template(request, emp_id):
     """
     This method is used to return the mail template
     """
-    body = RecruitmentMailTemplate.objects.get(id=emp_id).body
+    body = HorillaMailTemplate.objects.get(id=emp_id).body
     instance_id = request.GET.get("instance_id")
     if instance_id:
         instance = Employee.objects.get(id=instance_id)
@@ -126,8 +197,6 @@ def send_mail_to_employee(request):
     attachments = [
         (file.name, file.read(), file.content_type) for file in other_attachments
     ]
-    email_backend = ConfiguredEmailBackend()
-    host = email_backend.dynamic_username
 
     if employee_id:
         employee_obj = Employee.objects.filter(id=employee_id)
@@ -138,7 +207,7 @@ def send_mail_to_employee(request):
     template_attachment_ids = request.POST.getlist("template_attachments")
     for employee in employees:
         bodys = list(
-            RecruitmentMailTemplate.objects.filter(
+            HorillaMailTemplate.objects.filter(
                 id__in=template_attachment_ids
             ).values_list("body", flat=True)
         )
@@ -169,10 +238,9 @@ def send_mail_to_employee(request):
         )
 
         email = EmailMessage(
-            subject,
-            render_bdy,
-            host,
-            [send_to_mail],
+            subject=subject,
+            body=render_bdy,
+            to=[send_to_mail],
         )
         email.content_subtype = "html"
 

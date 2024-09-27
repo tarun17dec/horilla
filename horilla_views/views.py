@@ -1,17 +1,23 @@
 import importlib
 
 from django import forms
+from django.contrib import messages
+from django.core.cache import cache as CACHE
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
+from django.utils.decorators import method_decorator
 from django.views import View
+from django.views.decorators.csrf import csrf_protect
 
 from horilla_views import models
-from horilla_views.cbv_methods import get_short_uuid
-from horilla_views.generic.cbv.views import dynamic_create_cache
+from horilla_views.cbv_methods import get_short_uuid, login_required
+from horilla_views.forms import SavedFilterForm
+from horilla_views.generic.cbv.views import HorillaFormView
 
 # Create your views here.
 
 
+@method_decorator(login_required, name="dispatch")
 class ToggleColumn(View):
     """
     ToggleColumn
@@ -42,6 +48,7 @@ class ToggleColumn(View):
         return HttpResponse("success")
 
 
+@method_decorator(login_required, name="dispatch")
 class ReloadField(View):
     """
     ReloadField
@@ -58,29 +65,34 @@ class ReloadField(View):
         module = importlib.import_module(module_name)
         parent_form = getattr(module, class_name)()
 
-        dynamic_cache = dynamic_create_cache.get(
-            request.session.session_key + reload_field
-        )
-        form: forms.ModelForm = dynamic_cache["form"]
+        dynamic_cache = CACHE.get(request.session.session_key + "cbv" + reload_field)
+        model: models.HorillaModel = dynamic_cache["model"]
 
         cache_field = dynamic_cache["dynamic_field"]
         if cache_field != reload_field:
             cache_field = reload_field
         field = parent_form.fields[cache_field]
 
-        queryset = form._meta.model.objects.all()
+        queryset = model.objects.all()
         queryset = field.queryset
         choices = [(instance.id, instance) for instance in queryset]
         choices.insert(0, ("", "Select option"))
         choices.append(("dynamic_create", "Dynamic create"))
 
-        parent_form.fields[cache_field] = forms.ChoiceField(
+        form_field = forms.ChoiceField
+        if isinstance(field, forms.ModelMultipleChoiceField):
+            form_field = forms.MultipleChoiceField
+
+        parent_form.fields[cache_field] = form_field(
             choices=choices,
             label=field.label,
             required=field.required,
-            widget=forms.Select(attrs=field.widget.attrs),
         )
-        parent_form.fields[cache_field].initial = dynamic_cache["value"]
+        dynamic_initial = request.GET.get("dynamic_initial", [])
+        parent_form.fields[cache_field].widget.attrs = field.widget.attrs
+        parent_form.fields[cache_field].initial = eval(
+            f"""[{dynamic_cache["value"]},{dynamic_initial}]"""
+        )
 
         field = parent_form[cache_field]
         dynamic_id: str = get_short_uuid(4)
@@ -91,6 +103,7 @@ class ReloadField(View):
         )
 
 
+@method_decorator(login_required, name="dispatch")
 class ActiveTab(View):
     def get(self, *args, **kwargs):
         """
@@ -112,6 +125,7 @@ class ActiveTab(View):
         return JsonResponse({"message": "Success"})
 
 
+@method_decorator(login_required, name="dispatch")
 class ActiveGroup(View):
     def get(self, *args, **kwargs):
         """
@@ -135,3 +149,91 @@ class ActiveGroup(View):
             instance.group_target = target
             instance.save()
         return JsonResponse({"message": "Success"})
+
+
+@method_decorator(login_required, name="dispatch")
+class SavedFilter(HorillaFormView):
+    """
+    SavedFilter
+    """
+
+    model = models.SavedFilter
+    form_class = SavedFilterForm
+    new_display_title = "Save Applied Filter"
+    template_name = "generic/saved_filter_form.html"
+    form_disaply_attr = "Blah"
+
+    def form_valid(self, form: SavedFilterForm) -> HttpResponse:
+        referrer = self.request.POST.get("referrer", "")
+        path = self.request.POST.get("path", "/")
+        result_dict = {key: value[0] for key, value in self.request.GET.lists()}
+        if form.is_valid():
+            instance: models.SavedFilter = form.save(commit=False)
+            if not instance.pk:
+                instance.path = path
+                instance.referrer = referrer
+                instance.filter = result_dict
+                instance.urlencode = self.request.GET.urlencode()
+            instance.save()
+            messages.success(self.request, "Filter Saved")
+            return self.HttpResponse()
+        return super().form_valid(form)
+
+    def get_context_data(self, **kwargs) -> dict:
+        context = super().get_context_data(**kwargs)
+        referrer = self.request.GET.get("referrer", "")
+        if referrer:
+            # Remove the protocol and domain part
+            referrer = "/" + "/".join(referrer.split("/")[3:])
+        context["path"] = self.request.GET.get("path", "")
+        context["referrer"] = referrer
+        return context
+
+
+@method_decorator(login_required, name="dispatch")
+class DeleteSavedFilter(View):
+    """
+    Delete saved filter
+    """
+
+    def get(self, *args, **kwargs):
+        pk = kwargs["pk"]
+        models.SavedFilter.objects.filter(created_by=self.request.user, pk=pk).delete()
+        return HttpResponse("")
+
+
+@method_decorator(login_required, name="dispatch")
+class ActiveView(View):
+    """
+    ActiveView CBV
+    """
+
+    def get(self, *args, **kwargs):
+        path = self.request.GET["path"]
+        view_type = self.request.GET["view"]
+        active_view = models.ActiveView.objects.filter(
+            path=path, created_by=self.request.user
+        ).first()
+
+        active_view = active_view if active_view else models.ActiveView()
+        active_view.path = path
+        active_view.type = view_type
+        active_view.save()
+        return HttpResponse("")
+
+
+@method_decorator(login_required, name="dispatch")
+@method_decorator(csrf_protect, name="dispatch")
+class SearchInIds(View):
+    """
+    Search in ids view
+    """
+
+    def get(self, *args, **kwargs):
+        """
+        Search in instance ids method
+        """
+        cache_key = f"{self.request.session.session_key}search_in_instance_ids"
+        context: dict = CACHE.get(cache_key)
+        context["instances"] = context["filter_class"](self.request.GET).qs
+        return render(self.request, "generic/filter_result.html", context)

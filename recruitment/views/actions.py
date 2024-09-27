@@ -6,6 +6,7 @@ This module is used to register methods to delete/archive/un-archive instances
 
 import json
 
+from django import template
 from django.contrib import messages
 from django.contrib.auth.models import Permission
 from django.db.models import ProtectedError
@@ -15,6 +16,7 @@ from django.utils.translation import gettext as __
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
 
+from base.models import HorillaMailTemplate
 from employee.models import Employee
 from horilla.decorators import login_required, permission_required
 from horilla.group_by import group_by_queryset
@@ -136,9 +138,10 @@ def note_delete_individual(request, note_id):
     This method is used to delete the stage note
     """
     note = StageNote.objects.get(id=note_id)
+    candidate_id = note.candidate_id.id
     note.delete()
     messages.success(request, _("Note deleted."))
-    return HttpResponse("<script>window.location.reload()</script>")
+    return redirect(f"/recruitment/add-note/{candidate_id}/")
 
 
 @login_required
@@ -153,6 +156,7 @@ def stage_delete(request, stage_id):
     try:
         try:
             stage_obj = Stage.objects.get(id=stage_id)
+            recruitment_id = stage_obj.recruitment_id.id
         except Stage.DoesNotExist:
             messages.error(request, _("Stage not found."))
             return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
@@ -188,6 +192,10 @@ def stage_delete(request, stage_id):
             )
     except (Stage.DoesNotExist, OverflowError):
         messages.error(request, _("Stage Does not exists.."))
+    hx_request = request.META.get("HTTP_HX_REQUEST")
+    hx_current_url = request.META.get("HTTP_HX_CURRENT_URL")
+    if hx_request and hx_request == "true" and "stage-view" in hx_current_url:
+        return redirect(f"/recruitment/stage-data/{recruitment_id}/")
     return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
 
@@ -381,3 +389,24 @@ def remove_recruitment_manager(request, mid, rid):
             "pd": previous_data,
         },
     )
+
+
+@login_required
+def get_template(request, obj_id=None):
+    """
+    This method is used to return the mail template
+    """
+    if obj_id:
+        body = HorillaMailTemplate.objects.get(id=obj_id).body
+        template_bdy = template.Template(body)
+    if request.GET.get("word"):
+        word = request.GET.get("word")
+        template_bdy = template.Template("{{" + word + "}}")
+    candidate_id = request.GET.get("candidate_id")
+    if candidate_id:
+        candidate_obj = Candidate.objects.get(id=candidate_id)
+        context = template.Context(
+            {"instance": candidate_obj, "self": request.user.employee_get}
+        )
+        body = template_bdy.render(context) or " "
+    return JsonResponse({"body": body})

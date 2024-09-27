@@ -1,5 +1,5 @@
 {% load basefilters %}
-{% load i18n %} {% load yes_no %}
+{% load i18n %} {% load horillafilters %}
 <div class="oh-modal__dialog-header">
     <span
       class="oh-modal__dialog-title"
@@ -18,7 +18,9 @@
         <button
             hx-get="{% url 'shift-allocation-request-details' previous %}?instances_ids={{allocation_ids}}&dashboard={{dashboard}}"
             hx-target="#objectDetailsModalTarget"
-            class="oh-modal__diaglog-nav oh-modal__nav-prev">
+            class="oh-modal__diaglog-nav oh-modal__nav-prev"
+            data-action="previous"
+            >
             <ion-icon name="chevron-back-outline" class="md hydrated" role="img"
             aria-label="chevron back outline"></ion-icon>
         </button>
@@ -26,7 +28,9 @@
         <button
             hx-get="{% url 'shift-allocation-request-details' next %}?instances_ids={{allocation_ids}}&dashboard={{dashboard}}"
             hx-target="#objectDetailsModalTarget"
-            class="oh-modal__diaglog-nav oh-modal__nav-next">
+            class="oh-modal__diaglog-nav oh-modal__nav-next"
+            data-action="next"
+            >
             <ion-icon name="chevron-forward-outline" class="md hydrated" role="img"
             aria-label="chevron forward outline"></ion-icon>
         </button>

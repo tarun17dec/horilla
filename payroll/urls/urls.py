@@ -53,12 +53,6 @@ urlpatterns = [
     ),
     path("payslip-pdf/<int:id>", views.payslip_pdf, name="payslip-pdf"),
     path("contract-filter", views.contract_filter, name="contract-filter"),
-    path("work-record-view", views.work_record_view, name="work-record-view"),
-    path(
-        "work-record-employees-view",
-        views.work_record_employee_view,
-        name="work-record-employees-view",
-    ),
     path("settings", views.settings, name="payroll-settings"),
     path(
         "payslip-status-update/<int:payslip_id>/",
@@ -171,5 +165,31 @@ urlpatterns = [
         "initial-notice-period",
         views.initial_notice_period,
         name="initial-notice-period",
+    ),
+    # ===========================Auto payslip generate================================
+    path(
+        "auto-payslip-settings-view/",
+        views.auto_payslip_settings_view,
+        name="auto-payslip-settings-view",
+    ),
+    path(
+        "create-auto-payslip",
+        views.create_or_update_auto_payslip,
+        name="create-auto-payslip",
+    ),
+    path(
+        "update-auto-payslip/<int:auto_id>",
+        views.create_or_update_auto_payslip,
+        name="update-auto-payslip",
+    ),
+    path(
+        "delete-auto-payslip/<int:auto_id>",
+        views.delete_auto_payslip,
+        name="delete-auto-payslip",
+    ),
+    path(
+        "activate-auto-payslip-generate",
+        views.activate_auto_payslip_generate,
+        name="activate-auto-payslip-generate",
     ),
 ]

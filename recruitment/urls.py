@@ -10,28 +10,11 @@ import recruitment.views.actions
 import recruitment.views.dashboard
 import recruitment.views.search
 import recruitment.views.surveys
-from base.views import object_duplicate
-from recruitment.forms import (
-    OfferLetterForm,
-    QuestionForm,
-    RecruitmentCreationForm,
-    StageCreationForm,
-)
-from recruitment.models import (
-    Candidate,
-    Recruitment,
-    RecruitmentMailTemplate,
-    RecruitmentSurvey,
-    Stage,
-)
+from base.views import add_remove_dynamic_fields, object_duplicate
+from recruitment.forms import QuestionForm, RecruitmentCreationForm, StageCreationForm
+from recruitment.models import Candidate, Recruitment, RecruitmentSurvey, Stage
 from recruitment.views import views
-from recruitment.views.mail_templates import (
-    create_letter,
-    delete_mail_templates,
-    get_template,
-    view_letter,
-    view_mail_templates,
-)
+from recruitment.views.actions import get_template
 
 urlpatterns = [
     path("recruitment-create", views.recruitment, name="recruitment-create"),
@@ -119,11 +102,6 @@ urlpatterns = [
         "recruitment-archive/<int:rec_id>",
         views.recruitment_archive,
         name="recruitment-archive",
-    ),
-    path(
-        "pipeline-search-candidate",
-        recruitment.views.search.pipeline_candidate_search,
-        name="pipeline-search-candidate",
     ),
     path(
         "candidate-schedule-date-update",
@@ -346,6 +324,16 @@ urlpatterns = [
         name="stage-sequence-update",
     ),
     path(
+        "survey-template-preview/<str:title>/",
+        recruitment.views.surveys.survey_preview,
+        name="survey-template-preview",
+    ),
+    path(
+        "update-question-order",
+        recruitment.views.surveys.question_order_update,
+        name="update-question-order",
+    ),
+    path(
         "recruitment-application-survey",
         recruitment.views.surveys.survey_form,
         name="recruitment-application-survey",
@@ -359,6 +347,18 @@ urlpatterns = [
         "recruitment-survey-question-template-create",
         recruitment.views.surveys.create_question_template,
         name="recruitment-survey-question-template-create",
+    ),
+    path(
+        "add-remove-options-field",
+        add_remove_dynamic_fields,
+        name="add-remove-options-field",
+        kwargs={
+            "model": RecruitmentSurvey,
+            "form_class": QuestionForm,
+            "template": "survey/add_more_options.html",
+            "field_type": "character",
+            "field_name_pre": "options",
+        },
     ),
     path(
         "recruitment-survey-question-template-edit/<int:survey_id>/",
@@ -465,20 +465,6 @@ urlpatterns = [
         views.skill_zone_cand_delete,
         name="skill-zone-cand-delete",
     ),
-    path("view-mail-templates/", view_mail_templates, name="view-mail-templates"),
-    path("view-mail-template/<int:obj_id>/", view_letter, name="view-mail-template"),
-    path(
-        "duplicate-mail-template/<int:obj_id>/",
-        object_duplicate,
-        name="duplicate-mail-template",
-        kwargs={
-            "model": RecruitmentMailTemplate,
-            "form": OfferLetterForm,
-            "template": "offerletter/htmx/form.html",
-        },
-    ),
-    path("create-mail-template/", create_letter, name="create-mail-template"),
-    path("delete-mail-template/", delete_mail_templates, name="delete-mail-template"),
     path("get-template/<int:obj_id>/", get_template, name="get-template"),
     path("get-template-hint/", get_template, name="get-template-hint"),
     path(
@@ -554,5 +540,60 @@ urlpatterns = [
         "check-vaccancy",
         views.check_vaccancy,
         name="check-vaccancy",
+    ),
+    path(
+        "skills-view/",
+        views.skills_view,
+        name="skills-view",
+    ),
+    path(
+        "create-skills/",
+        views.create_skills,
+        name="create-skills",
+    ),
+    path(
+        "delete-skills/",
+        views.delete_skills,
+        name="delete-skills",
+    ),
+    path(
+        "add-bulk-resume/",
+        views.add_bulk_resumes,
+        name="add-bulk-resume",
+    ),
+    path(
+        "view-bulk-resume/",
+        views.view_bulk_resumes,
+        name="view-bulk-resume",
+    ),
+    path(
+        "delete-resume-file/",
+        views.delete_resume_file,
+        name="delete-resume-file",
+    ),
+    path(
+        "matching-resumes/<int:rec_id>",
+        views.matching_resumes,
+        name="matching-resumes",
+    ),
+    path(
+        "matching-resume-completion",
+        views.matching_resume_completion,
+        name="matching-resume-completion",
+    ),
+    path(
+        "candidate-reject-reasons/",
+        views.candidate_reject_reasons,
+        name="candidate-reject-reasons",
+    ),
+    path(
+        "hired-candidate-chart",
+        views.hired_candidate_chart,
+        name="hired-candidate-chart",
+    ),
+    path(
+        "self-tracking-feature/",
+        views.self_tracking_feature,
+        name="self-tracking-feature",
     ),
 ]

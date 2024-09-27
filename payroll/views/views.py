@@ -36,20 +36,25 @@ from horilla.decorators import (
     permission_required,
 )
 from horilla.group_by import group_by_queryset
+from horilla.horilla_settings import HORILLA_DATE_FORMATS
 from notifications.signals import notify
 from payroll.context_processors import get_active_employees
 from payroll.filters import ContractFilter, ContractReGroup, PayslipFilter
-from payroll.forms.component_forms import ContractExportFieldForm, PayrollSettingsForm
+from payroll.forms.component_forms import (
+    ContractExportFieldForm,
+    PayrollSettingsForm,
+    PayslipAutoGenerateForm,
+)
 from payroll.methods.methods import paginator_qry, save_payslip
 from payroll.models.models import (
     Contract,
     FilingStatus,
     PayrollGeneralSetting,
     Payslip,
+    PayslipAutoGenerate,
     Reimbursement,
     ReimbursementFile,
     ReimbursementrequestComment,
-    WorkRecord,
 )
 from payroll.models.tax_models import PayrollSettings
 
@@ -258,6 +263,19 @@ def contract_delete(request, contract_id):
         messages.success(request, _("Contract deleted"))
         request_path = request.path.split("/")
         if "delete-contract-modal" in request_path:
+            if instances_ids := request.GET.get("instances_ids"):
+                get_data = request.GET.copy()
+                get_data.pop("instances_ids", None)
+                previous_data = get_data.urlencode()
+                instances_list = json.loads(instances_ids)
+                previous_instance, next_instance = closest_numbers(
+                    instances_list, contract_id
+                )
+                if contract_id in instances_list:
+                    instances_list.remove(contract_id)
+                urls = f"/payroll/single-contract-view/{next_instance}/"
+                params = f"?{previous_data}&instances_ids={instances_list}"
+                return redirect(urls + params)
             return HttpResponse("<script>window.location.reload();</script>")
         else:
             return redirect(f"/payroll/contract-filter?{request.GET.urlencode()}")
@@ -281,17 +299,12 @@ def contract_view(request):
     else:
         template = "payroll/contract/contract_empty.html"
 
-    field = request.GET.get("field")
     contracts = paginator_qry(contracts, request.GET.get("page"))
     contract_ids_json = json.dumps([instance.id for instance in contracts.object_list])
     filter_form = ContractFilter(request.GET)
-    export_filter = ContractFilter(request.GET)
-    export_column = ContractExportFieldForm()
     context = {
         "contracts": contracts,
         "f": filter_form,
-        "export_filter": export_filter,
-        "export_column": export_column,
         "contract_ids": contract_ids_json,
         "gp_fields": ContractReGroup.fields,
     }
@@ -300,46 +313,44 @@ def contract_view(request):
 
 
 @login_required
-@hx_request_required
+# @hx_request_required         #this function is also used in payroll dashboard which uses ajax
 @owner_can_enter("payroll.view_contract", Contract)
 def view_single_contract(request, contract_id):
     """
     Renders a single contract view page.
-
-    Parameters:
-    - request (HttpRequest): The HTTP request object.
-    - contract_id (int): The ID of the contract to view.
-
-    Returns:
-        The rendered contract single view page.
-
     """
-    HTTP_REFERERS = [
-        part for part in request.META.get("HTTP_REFERER").split("/") if part
-    ]
+    get_data = request.GET.copy()
+    get_data.pop("instances_ids", None)
+    previous_data = get_data.urlencode()
+    dashboard = request.GET.get("dashboard", "")
+
+    HTTP_REFERERS = request.META.get("HTTP_REFERER", "").split("/")
     delete_hx_target = (
         "#personal_target"
-        if HTTP_REFERERS[:-2]
-        and HTTP_REFERERS[-2] == "employee-view"
-        or HTTP_REFERERS[-1] == "employee-profile"
-        else "#payroll-contract-container"
+        if "employee-view" in HTTP_REFERERS or "employee-profile" in HTTP_REFERERS
+        else "#objectDetailsModalTarget"
     )
-    dashboard = ""
-    if request.GET.get("dashboard"):
-        dashboard = request.GET.get("dashboard")
-    contract = Contract.objects.get(id=contract_id)
+
+    contract = Contract.find(contract_id)
+
     context = {
         "contract": contract,
         "dashboard": dashboard,
         "delete_hx_target": delete_hx_target,
+        "pd": previous_data,
     }
+
     contract_ids_json = request.GET.get("instances_ids")
     if contract_ids_json:
         contract_ids = json.loads(contract_ids_json)
         previous_id, next_id = closest_numbers(contract_ids, contract_id)
-        context["next"] = next_id
-        context["previous"] = previous_id
-        context["contract_ids"] = contract_ids_json
+        context.update(
+            {
+                "previous": previous_id,
+                "next": next_id,
+                "contract_ids": contract_ids_json,
+            }
+        )
     return render(request, "payroll/contract/contract_single_view.html", context)
 
 
@@ -400,73 +411,6 @@ def contract_filter(request):
             "contract_ids": contract_ids_json,
             "field": field,
         },
-    )
-
-
-@login_required
-@permission_required("payroll.view_workrecord")
-def work_record_create(request):
-    """
-    Work record create view
-    """
-    from payroll.forms.forms import WorkRecordForm
-
-    form = WorkRecordForm()
-
-    context = {"form": form}
-    if request.POST:
-        form = WorkRecordForm(request.POST)
-        if form.is_valid():
-            form.save()
-        else:
-            context["form"] = form
-    return render(request, "payroll/work_record/work_record_create.html", context)
-
-
-@login_required
-@permission_required("payroll.view_workrecord")
-def work_record_view(request):
-    """
-    Work record view method
-    """
-    contracts = WorkRecord.objects.all()
-    context = {"contracts": contracts}
-    return render(request, "payroll/work_record/work_record_view.html", context)
-
-
-@login_required
-@permission_required("payroll.workrecord")
-def work_record_employee_view(request):
-    """
-    Work record by employee view method
-    """
-    current_month_start_date = datetime.now().replace(day=1)
-    next_month_start_date = current_month_start_date + timedelta(days=31)
-    current_month_records = WorkRecord.objects.filter(
-        start_datetime__gte=current_month_start_date,
-        start_datetime__lt=next_month_start_date,
-    ).order_by("start_datetime")
-    current_date = timezone.now().date()
-    current_month = current_date.strftime("%B")
-    start_of_month = current_date.replace(day=1)
-    employees = Employee.objects.all()
-
-    current_month_dates_list = [
-        datetime.now().replace(day=day).date() for day in range(1, 32)
-    ]
-
-    context = {
-        "days": range(1, 32),
-        "employees": employees,
-        "current_date": current_date,
-        "current_month": current_month,
-        "start_of_month": start_of_month,
-        "current_month_dates_list": current_month_dates_list,
-        "work_records": current_month_records,
-    }
-
-    return render(
-        request, "payroll/work_record/work_record_employees_view.html", context
     )
 
 
@@ -968,9 +912,12 @@ def payslip_export(request):
         for deduction_id, group in grouped_deductions.items():
             title = group[0]["title"]
             employee_contribution = sum(item["amount"] for item in group)
-            employer_contribution = sum(
-                item["employer_contribution_amount"] for item in group
-            )
+            try:
+                employer_contribution = sum(
+                    item["employer_contribution_amount"] for item in group
+                )
+            except:
+                employer_contribution = 0
             total_contribution = employee_contribution + employer_contribution
             if employer_contribution > 0:
                 contribution_deductions.append(
@@ -984,7 +931,7 @@ def payslip_export(request):
                 )
                 table5_data.append(
                     {
-                        "Employee": Employee.objects.get(id=emp),
+                        "Employee": Employee.objects.get(id=emp.id),
                         "Employer Contribution": employer_contribution,
                         "Employee Contribution": employee_contribution,
                     }
@@ -1006,20 +953,6 @@ def payslip_export(request):
             else:
                 date_format = "MMM. D, YYYY"
 
-            # Define date formats
-            date_formats = {
-                "DD-MM-YYYY": "%d-%m-%Y",
-                "DD.MM.YYYY": "%d.%m.%Y",
-                "DD/MM/YYYY": "%d/%m/%Y",
-                "MM/DD/YYYY": "%m/%d/%Y",
-                "YYYY-MM-DD": "%Y-%m-%d",
-                "YYYY/MM/DD": "%Y/%m/%d",
-                "MMMM D, YYYY": "%B %d, %Y",
-                "DD MMMM, YYYY": "%d %B, %Y",
-                "MMM. D, YYYY": "%b. %d, %Y",
-                "D MMM. YYYY": "%d %b. %Y",
-                "dddd, MMMM D, YYYY": "%A, %B %d, %Y",
-            }
             start_date_str = str(payslip.start_date)
             end_date_str = str(payslip.end_date)
 
@@ -1027,12 +960,11 @@ def payslip_export(request):
             start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
             end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
 
-            # Print the formatted date for each format
-            for format_name, format_string in date_formats.items():
+            for format_name, format_string in HORILLA_DATE_FORMATS.items():
                 if format_name == date_format:
                     formatted_start_date = start_date.strftime(format_string)
 
-            for format_name, format_string in date_formats.items():
+            for format_name, format_string in HORILLA_DATE_FORMATS.items():
                 if format_name == date_format:
                     formatted_end_date = end_date.strftime(format_string)
 
@@ -1341,6 +1273,19 @@ def slip_group_name_update(request):
 @login_required
 @permission_required("payroll.add_contract")
 def contract_export(request):
+    hx_request = request.META.get("HTTP_HX_REQUEST")
+    if hx_request:
+        export_filter = ContractFilter()
+        export_column = ContractExportFieldForm()
+        content = {
+            "export_filter": export_filter,
+            "export_column": export_column,
+        }
+        return render(
+            request,
+            "payroll/contract/contract_export_filter.html",
+            context=content,
+        )
     return export_data(
         request=request,
         model=Contract,
@@ -1432,31 +1377,16 @@ def payslip_pdf(request, id):
         start_date_str = data["start_date"]
         end_date_str = data["end_date"]
 
-        # Define date formats
-        date_formats = {
-            "DD-MM-YYYY": "%d-%m-%Y",
-            "DD.MM.YYYY": "%d.%m.%Y",
-            "DD/MM/YYYY": "%d/%m/%Y",
-            "MM/DD/YYYY": "%m/%d/%Y",
-            "YYYY-MM-DD": "%Y-%m-%d",
-            "YYYY/MM/DD": "%Y/%m/%d",
-            "MMMM D, YYYY": "%B %d, %Y",
-            "DD MMMM, YYYY": "%d %B, %Y",
-            "MMM. D, YYYY": "%b. %d, %Y",
-            "D MMM. YYYY": "%d %b. %Y",
-            "dddd, MMMM D, YYYY": "%A, %B %d, %Y",
-        }
-
         # Convert the string to a datetime.date object
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
 
         # Print the formatted date for each format
-        for format_name, format_string in date_formats.items():
+        for format_name, format_string in HORILLA_DATE_FORMATS.items():
             if format_name == date_format:
                 formatted_start_date = start_date.strftime(format_string)
 
-        for format_name, format_string in date_formats.items():
+        for format_name, format_string in HORILLA_DATE_FORMATS.items():
             if format_name == date_format:
                 formatted_end_date = end_date.strftime(format_string)
 
@@ -1763,4 +1693,100 @@ def initial_notice_period(request):
     settings.notice_period = max(notice_period, 0)
     settings.save()
     messages.success(request, "Initial notice period updated")
+    return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+
+
+# ===========================Auto payslip generate================================
+
+
+@login_required
+@permission_required("payroll.view_PayslipAutoGenerate")
+def auto_payslip_settings_view(request):
+    payslip_auto_generate = PayslipAutoGenerate.objects.all()
+
+    context = {"payslip_auto_generate": payslip_auto_generate}
+    return render(request, "payroll/settings/auto_payslip_settings.html", context)
+
+
+@login_required
+@hx_request_required
+@permission_required("payroll.change_PayslipAutoGenerate")
+def create_or_update_auto_payslip(request, auto_id=None):
+    auto_payslip = None
+    if auto_id:
+        auto_payslip = PayslipAutoGenerate.objects.get(id=auto_id)
+    form = PayslipAutoGenerateForm(instance=auto_payslip)
+    if request.method == "POST":
+        form = PayslipAutoGenerateForm(request.POST, instance=auto_payslip)
+        if form.is_valid():
+            auto_payslip = form.save()
+            company = (
+                auto_payslip.company_id if auto_payslip.company_id else "All company"
+            )
+            messages.success(
+                request, _(f"Payslip Auto generate for {company} created successfully ")
+            )
+            return HttpResponse("<script>window.location.reload()</script>")
+    return render(
+        request, "payroll/settings/auto_payslip_create_or_update.html", {"form": form}
+    )
+
+
+@login_required
+@permission_required("payroll.change_PayslipAutoGenerate")
+def activate_auto_payslip_generate(request):
+    """
+    ajax function to update is active field in PayslipAutoGenerate.
+    Args:
+    - isChecked: Boolean value representing the state of PayslipAutoGenerate,
+    - autoId: Id of PayslipAutoGenerate object
+    """
+    isChecked = request.POST.get("isChecked")
+    autoId = request.POST.get("autoId")
+    payslip_auto = PayslipAutoGenerate.objects.get(id=autoId)
+    if isChecked == "true":
+        payslip_auto.auto_generate = True
+        response = {
+            "type": "success",
+            "message": _("Auto paslip generate activated successfully."),
+        }
+    else:
+        payslip_auto.auto_generate = False
+        response = {
+            "type": "success",
+            "message": _("Auto paslip generate deactivated successfully."),
+        }
+    payslip_auto.save()
+    return JsonResponse(response)
+
+
+@login_required
+@hx_request_required
+@permission_required("payroll.delete_PayslipAutoGenerate")
+def delete_auto_payslip(request, auto_id):
+    """
+    Delete a PayslipAutoGenerate object.
+
+    Args:
+        auto_id: The ID of PayslipAutoGenerate object to delete.
+
+    Returns:
+        Redirects to the contract view after successfully deleting the contract.
+
+    """
+    try:
+        auto_payslip = PayslipAutoGenerate.objects.get(id=auto_id)
+        if not auto_payslip.auto_generate:
+            company = (
+                auto_payslip.company_id if auto_payslip.company_id else "All company"
+            )
+            auto_payslip.delete()
+            messages.success(
+                request, _(f"Payslip auto generate for {company} deleted successfully.")
+            )
+        else:
+            messages.info(request, _(f"Active 'Payslip auto generate' cannot delete."))
+        return HttpResponse("<script>window.location.reload();</script>")
+    except PayslipAutoGenerate.DoesNotExist:
+        messages.error(request, _("Payslip auto generate not found."))
     return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))

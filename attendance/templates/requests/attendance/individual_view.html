@@ -4,6 +4,7 @@
     hx-get="{% url 'validate-attendance-request' previous %}?requests_ids={{requests_ids}}"
     hx-target="#validateAttendanceRequestModalBody"
     class="oh-modal__diaglog-nav oh-modal__nav-prev"
+    data-action="previous"
   >
     <ion-icon
       name="chevron-back-outline"
@@ -17,6 +18,7 @@
     hx-get="{% url 'validate-attendance-request' next %}?requests_ids={{requests_ids}}"
     hx-target="#validateAttendanceRequestModalBody"
     class="oh-modal__diaglog-nav oh-modal__nav-next"
+    data-action="next"
   >
     <ion-icon
       name="chevron-forward-outline"
@@ -119,7 +121,7 @@
       <ion-icon name="close-circle-outline"></ion-icon>
       {% trans "Reject" %}
     </a>
-    {% if request.user|is_reportingmanager or request.user.has_perm.attendance.change_attendance %}
+    {% if request.user|is_reportingmanager or perms.attendance.change_attendance %}
     <a
       href="{% url 'approve-validate-attendance-request' attendance.id %}"
       class="oh-btn oh-btn--success w-100"
@@ -128,7 +130,7 @@
       {% trans "Approve" %}
     </a>
     {% endif %}
-    {% if request.user|is_reportingmanager or request.user.has_perm.attendance.change_attendance %}
+    {% if request.user|is_reportingmanager or perms.attendance.change_attendance %}
     <a
       hx-get="{% url 'edit-validate-attendance' attendance.id %}"
       hx-target="#editValidateAttendanceRequestModalBody"

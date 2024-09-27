@@ -4,13 +4,21 @@ select_widgets.py
 This module is used to write horilla form select widgets
 """
 
-import datetime
+import uuid
 
 from django import forms
 
 from horilla import horilla_middlewares
 
 ALL_INSTANCES = {}
+
+
+def get_short_uuid(length: int, prefix: str = "widget"):
+    """
+    Short uuid generating method
+    """
+    uuid_str = str(uuid.uuid4().hex)
+    return prefix + str(uuid_str[:length]).replace("-", "")
 
 
 class HorillaMultiSelectWidget(forms.Widget):
@@ -27,6 +35,7 @@ class HorillaMultiSelectWidget(forms.Widget):
         filter_template_path=None,
         instance=None,
         required=False,
+        form=None,
         **kwargs
     ) -> None:
         self.filter_route_name = filter_route_name
@@ -35,6 +44,7 @@ class HorillaMultiSelectWidget(forms.Widget):
         self.filter_instance_contex_name = filter_instance_contex_name
         self.filter_template_path = filter_template_path
         self.instance = instance
+        self.form = form
         super().__init__()
 
     template_name = "horilla_widgets/horilla_multiselect_widget.html"
@@ -47,6 +57,17 @@ class HorillaMultiSelectWidget(forms.Widget):
         field = self.choices.field
         context["queryset"] = queryset
         context["field_name"] = name
+        if self.form and name in self.form.data:
+            initial = self.form.data.getlist(name)
+            context["initial"] = initial
+        elif value:
+            context["initial"] = value
+
+        elif self.instance and self.instance.pk:
+            initial = list(getattr(self.instance, name).values_list("id", flat=True))
+            context["initial"] = initial
+        else:
+            context["initial"] = []
         context["field"] = field
         context["self"] = self
         context["filter_template_path"] = self.filter_template_path
@@ -55,6 +76,8 @@ class HorillaMultiSelectWidget(forms.Widget):
         self.attrs["id"] = (
             ("id_" + name) if self.attrs.get("id") is None else self.attrs.get("id")
         )
+        uid = get_short_uuid(5)
+        context["section_id"] = uid
         context[self.filter_instance_contex_name] = self.filter_class
         request = getattr(horilla_middlewares._thread_locals, "request", None)
         ALL_INSTANCES[str(request.user.id)] = self

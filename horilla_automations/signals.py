@@ -4,6 +4,7 @@ horilla_automation/signals.py
 """
 
 import copy
+import logging
 import threading
 import types
 
@@ -16,6 +17,8 @@ from django.dispatch import receiver
 
 from horilla.horilla_middlewares import _thread_locals
 from horilla.signals import post_bulk_update, pre_bulk_update
+
+logger = logging.getLogger(__name__)
 
 
 @classmethod
@@ -173,10 +176,13 @@ def start_automation():
         def pre_bulk_update_handler(sender, queryset, *args, **kwargs):
             request = getattr(_thread_locals, "request", None)
             if request:
+                queryset_copy = queryset.none()
+                if queryset.count():
+                    queryset_copy = QuerySet.from_list(copy.deepcopy(list(queryset)))
                 _thread_locals.previous_bulk_record = {
                     "automation": automation,
                     "queryset": queryset,
-                    "queryset_copy": QuerySet.from_list(copy.deepcopy(list(queryset))),
+                    "queryset_copy": queryset_copy,
                 }
 
         func_name = f"{automation.method_title}_pre_bulk_signal_handler"
@@ -328,7 +334,6 @@ def send_mail(request, automation, instance):
     """
     from base.backends import ConfiguredEmailBackend
     from base.methods import generate_pdf
-    from horilla.decorators import logger
     from horilla_automations.methods.methods import (
         get_model_class,
         get_related_field_model,
@@ -346,7 +351,15 @@ def send_mail(request, automation, instance):
     to = tos[:1]
     cc = tos[1:]
     email_backend = ConfiguredEmailBackend()
-    host = email_backend.dynamic_username
+    display_email_name = email_backend.dynamic_from_email_with_display_name
+    if request:
+        try:
+            display_email_name = f"{request.user.employee_get.get_full_name()} <{request.user.employee_get.email}>"
+            from_email = display_email_name
+            reply_to = [display_email_name]
+        except:
+            logger.error(Exception)
+
     if mail_to_instance and request:
         attachments = []
         try:
@@ -368,7 +381,14 @@ def send_mail(request, automation, instance):
         template_bdy = template.Template(mail_template.body)
         context = template.Context({"instance": mail_to_instance, "self": sender})
         render_bdy = template_bdy.render(context)
-        email = EmailMessage(automation.title, render_bdy, host, to=to, cc=cc)
+        email = EmailMessage(
+            subject=automation.title,
+            body=render_bdy,
+            to=to,
+            cc=cc,
+            from_email=from_email,
+            reply_to=reply_to,
+        )
         email.content_subtype = "html"
 
         email.attachments = attachments

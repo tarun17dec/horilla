@@ -36,7 +36,7 @@
           <ul class="oh-dropdown__items">
             {% if perms.recruitment.change_recruitment or request.user|recruitment_manages:rec %}
             <li class="oh-dropdown__item">
-              <a hx-get="{% url 'recruitment-update-pipeline' rec.id %}" hx-target='#recruitmentUpdate' data-toggle='oh-modal-toggle' data-target="#recruitmentUpdateModal" class="oh-dropdown__link"
+              <a hx-get="{% url 'recruitment-update-pipeline' rec.id %}" hx-target='#objectUpdateModalTarget' data-toggle='oh-modal-toggle' data-target="#objectUpdateModal" class="oh-dropdown__link"
               >{% trans "Edit" %}</a
               >
             </li>
@@ -47,6 +47,17 @@
                   <a href="{% url 'recruitment-close-pipeline' rec.id %}" class="oh-dropdown__link"
                   onclick="return confirm('{% trans "Are you sure you want to close this recruitment?" %}');"
                   >{% trans "Close" %}</a
+                  >
+                </li>
+              {% endif %}
+              {% if perms.recruitment.add_candidate or request.user|recruitment_manages:rec %}
+                <li class="oh-dropdown__item">
+                  <a hx-get = "{% url 'view-bulk-resume'%}?rec_id={{rec.id}}"
+                    hx-target = "#bulkResumeUploadBody"
+                    data-toggle="oh-modal-toggle"
+                    data-target="#bulkResumeUpload"
+                    class="oh-dropdown__link"
+                  >{% trans "Resume Shortlisting" %}</a
                   >
                 </li>
               {% endif %}
@@ -77,9 +88,6 @@
           </ul>
         </div>
       </div>
-
-
-
     </div>
 
     </li>

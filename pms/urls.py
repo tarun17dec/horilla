@@ -1,6 +1,8 @@
 from django.urls import path
 
 from base.views import object_delete
+from horilla_audit.methods import history_tracking
+from pms import cbvs
 
 from . import models, views
 
@@ -22,7 +24,7 @@ urlpatterns = [
         name="update-key-result",
     ),
     path(
-        "delete-key-result/<int:id>/",
+        "delete-key-result/<int:obj_id>/",
         object_delete,
         name="delete-key-result",
         kwargs={"model": models.KeyResult, "redirect_path": "/pms/filter-key-result/"},
@@ -131,6 +133,7 @@ urlpatterns = [
     path("feedback-update/<int:id>", views.feedback_update, name="feedback-update"),
     path("feedback-delete/<int:id>", views.feedback_delete, name="feedback-delete"),
     path("feedback-archive/<int:id>", views.feedback_archive, name="feedback-archive"),
+    path("get-collegues", views.get_collegues, name="get-collegues"),
     path(
         "feedback-answer-get/<int:id>",
         views.feedback_answer_get,
@@ -163,6 +166,11 @@ urlpatterns = [
         "feedback-detailed-view-status/<int:id>",
         views.feedback_detailed_view_status,
         name="feedback-detailed-view-status",
+    ),
+    path(
+        "get-feedback-overview/<int:obj_id>",
+        views.get_feedback_overview,
+        name="get-feedback-overview",
     ),
     path("feedback-status", views.feedback_status, name="feedback-status"),
     path(
@@ -294,6 +302,11 @@ urlpatterns = [
         name="view-employee-objective",
     ),
     path(
+        "create-employee-objective/",
+        views.create_employee_objective,
+        name="create-employee-objective",
+    ),
+    path(
         "update-employee-objective/<int:emp_obj_id>/",
         views.update_employee_objective,
         name="update-employee-objective",
@@ -349,7 +362,7 @@ urlpatterns = [
         name="create-meeting",
     ),
     path(
-        "meetings-delete/<int:id>/",
+        "meetings-delete/<int:obj_id>/",
         object_delete,
         name="meetings-delete",
         kwargs={"model": models.Meetings, "redirect": "/pms/view-meetings"},
@@ -403,5 +416,89 @@ urlpatterns = [
         "meeting-employee-remove/<int:meet_id>/<int:employee_id>",
         views.meeting_employee_remove,
         name="meeting-employee-remove",
+    ),
+    path("performance-tab/<int:emp_id>", views.performance_tab, name="performance-tab"),
+    path(
+        "dashboard-feedback-answer",
+        views.dashboard_feedback_answer,
+        name="dashboard-feedback-answer",
+    ),
+    # ===========bonus point setting============
+    path(
+        "bonus-point-setting/",
+        cbvs.BonusPointSettingSectionView.as_view(),
+        name="bonus-point-setting",
+    ),
+    path(
+        "bonus-point-setting-nav",
+        cbvs.BonusPointSettingNavView.as_view(),
+        name="bonus-point-setting-nav",
+    ),
+    path(
+        "create-bonus-point-setting",
+        cbvs.BonusPointSettingFormView.as_view(),
+        name="create-bonus-point-setting",
+    ),
+    path(
+        "update-bonus-point-setting/<int:pk>/",
+        cbvs.BonusPointSettingFormView.as_view(),
+        name="update-bonus-point-setting",
+    ),
+    path(
+        "delete-bonus-point-setting/<int:pk>/",
+        views.delete_bonus_point_setting,
+        name="delete-bonus-point-setting",
+    ),
+    path(
+        "bonus-point-setting-list-view",
+        cbvs.BonusPointSettingListView.as_view(),
+        name="bonus-point-setting-list-view",
+    ),
+    path(
+        "bonus-setting-form-values",
+        views.bonus_setting_form_values,
+        name="bonus-setting-form-values",
+    ),
+    path(
+        "update-isactive-bonuspoint-setting/<int:obj_id>",
+        views.update_isactive_bonuspoint_setting,
+        name="update-isactive-bonuspoint-setting",
+    ),
+    # ===========Employee bonus point============
+    path(
+        "employee-bonus-point",
+        cbvs.EmployeeBonusPointSectionView.as_view(),
+        name="employee-bonus-point",
+    ),
+    path(
+        "employee-bonus-point-nav",
+        cbvs.EmployeeBonusPointNavView.as_view(),
+        name="employee-bonus-point-nav",
+    ),
+    path(
+        "create-employee-bonus-point",
+        cbvs.EmployeeBonusPointFormView.as_view(),
+        name="create-employee-bonus-point",
+    ),
+    path(
+        "employee-bonus-point-list-view",
+        cbvs.EmployeeBonusPointListView.as_view(),
+        name="employee-bonus-point-list-view",
+    ),
+    path(
+        "update-employee-bonus-point/<int:pk>/",
+        cbvs.EmployeeBonusPointFormView.as_view(),
+        name="update-employee-bonus-point",
+    ),
+    path(
+        "delete-employee-bonus-point/<int:pk>/",
+        views.delete_employee_bonus_point,
+        name="delete-employee-bonus-point",
+    ),
+    path(
+        "history-tracking/<int:obj_id>/",
+        history_tracking,
+        name="history-tracking",
+        kwargs={"model": models.Meetings, "decorators": ["login_required"]},
     ),
 ]

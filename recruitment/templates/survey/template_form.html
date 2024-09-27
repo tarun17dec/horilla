@@ -1,7 +1,6 @@
 <form
   hx-post="{% url 'recruitment-survey-question-template-create' %}"
   hx-target="#templateModalBody"
-  method="post"
 >
   {% csrf_token %} {{form.as_p}}
 </form>
@@ -9,11 +8,14 @@
 <script>
   function toggleOpt() {
     if ($("#templateModalBody form [name=type]").first().val() == "options" || $("#templateModalBody form [name=type]").first().val() == "multiple") {
-        $("#id_options, [for='id_options']").show();
+        $("div[id^='optionDiv']").show();
+        $("#addMoreOptions").show();
     } else {
-        $("#id_options, [for='id_options']").hide();
+        $("div[id^='optionDiv']").hide();
+        $("#addMoreOptions").hide();
     }
 }
+
 
 $("#templateModalBody form [name=type]").change(function (e) {
     toggleOpt();

@@ -21,6 +21,7 @@ class YourForm(forms.Form):
         pass
 """
 
+import logging
 import re
 from datetime import date
 from typing import Any
@@ -41,14 +42,16 @@ from employee.models import (
     Employee,
     EmployeeBankDetails,
     EmployeeNote,
+    EmployeeTag,
     EmployeeWorkInformation,
     NoteFiles,
     Policy,
     PolicyMultipleFile,
 )
 from horilla import horilla_middlewares
-from horilla.decorators import logger
 from horilla_audit.models import AccountBlockUnblock
+
+logger = logging.getLogger(__name__)
 
 
 class ModelForm(forms.ModelForm):
@@ -155,7 +158,12 @@ class EmployeeForm(ModelForm):
 
         model = Employee
         fields = "__all__"
-        exclude = ("employee_user_id",)
+        exclude = (
+            "employee_user_id",
+            "additional_info",
+            "is_from_onboarding",
+            "is_directly_converted",
+        )
         widgets = {
             "dob": TextInput(attrs={"type": "date", "id": "dob"}),
         }
@@ -176,6 +184,10 @@ class EmployeeForm(ModelForm):
             kwargs["initial"] = initial
         else:
             self.initial = {"badge_id": self.get_next_badge_id()}
+
+    def as_p(self, *args, **kwargs):
+        context = {"form": self}
+        return render_to_string("employee/create_form/personal_info_as_p.html", context)
 
     def get_next_badge_id(self):
         """
@@ -672,3 +684,19 @@ class ActiontypeForm(ModelForm):
                 "onchange": "actionChange($(this))",
             }
         )
+
+
+class EmployeeTagForm(ModelForm):
+    """
+    Employee Tags form
+    """
+
+    class Meta:
+        """
+        Meta class for additional options
+        """
+
+        model = EmployeeTag
+        fields = "__all__"
+        exclude = ["is_active"]
+        widgets = {"color": TextInput(attrs={"type": "color", "style": "height:50px"})}

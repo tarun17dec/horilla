@@ -1,36 +1,44 @@
 import calendar
+import logging
 import math
 import operator
-import sys
-from collections.abc import Iterable
+import threading
 from datetime import date, datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
+from django.apps import apps
 from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.db import models
 from django.db.models import Q
+from django.db.models.signals import post_save, pre_save
+from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from base.horilla_company_manager import HorillaCompanyManager
+from base.methods import get_date_range
 from base.models import (
     Company,
+    CompanyLeaves,
     Department,
+    Holidays,
     JobPosition,
     MultipleApprovalCondition,
     clear_messages,
 )
 from employee.models import Employee, EmployeeWorkInformation
 from horilla import horilla_middlewares
+from horilla.methods import get_horilla_model_class
 from horilla.models import HorillaModel
 from horilla_audit.methods import get_diff
 from horilla_audit.models import HorillaAuditInfo, HorillaAuditLog
+from leave.methods import calculate_requested_days
 from leave.threading import LeaveClashThread
 
-from .methods import attendance_days, calculate_requested_days
+logger = logging.getLogger(__name__)
 
 operator_mapping = {
     "equal": operator.eq,
@@ -156,9 +164,10 @@ class LeaveType(HorillaModel):
     name = models.CharField(max_length=30, null=False)
     color = models.CharField(null=True, max_length=30)
     payment = models.CharField(max_length=30, choices=PAYMENT, default="unpaid")
-    count = models.IntegerField(null=True, default=1)
+    count = models.FloatField(null=True, default=1)
     period_in = models.CharField(max_length=30, choices=TIME_PERIOD, default="day")
-    total_days = models.IntegerField(null=True, default=1)
+    limit_leave = models.BooleanField(default=True)
+    total_days = models.FloatField(null=True, default=1)
     reset = models.BooleanField(default=False)
     is_encashable = models.BooleanField(default=False, verbose_name=_("Is encashable"))
     reset_based = models.CharField(
@@ -216,6 +225,51 @@ class LeaveType(HorillaModel):
                 url = self.icon.url
         return url
 
+    def leave_type_next_reset_date(self):
+        today = datetime.now().date()
+
+        if not self.reset:
+            return None
+
+        def get_reset_day(month, day):
+            return (
+                calendar.monthrange(today.year, month)[1]
+                if day == "last day"
+                else int(day)
+            )
+
+        if self.reset_based == "yearly":
+            month, day = int(self.reset_month), get_reset_day(
+                int(self.reset_month), self.reset_day
+            )
+            reset_date = datetime(
+                today.year + (datetime(today.year, month, day).date() < today),
+                month,
+                day,
+            ).date()
+
+        elif self.reset_based == "monthly":
+            month = today.month
+            reset_date = datetime(
+                today.year, month, get_reset_day(month, self.reset_day)
+            ).date()
+            if reset_date < today:
+                month = (month % 12) + 1
+                year = today.year + (month == 1)
+                reset_date = datetime(
+                    year, month, get_reset_day(month, self.reset_day)
+                ).date()
+
+        elif self.reset_based == "weekly":
+            target_weekday = WEEK_DAYS[self.reset_day]
+            days_until_reset = (target_weekday - today.weekday()) % 7 or 7
+            reset_date = today + timedelta(days=days_until_reset)
+
+        else:
+            reset_date = None
+
+        return reset_date
+
     def clean(self, *args, **kwargs):
         if self.is_compensatory_leave:
             if LeaveType.objects.filter(is_compensatory_leave=True).count() >= 1:
@@ -266,6 +320,9 @@ class CompanyLeave(HorillaModel):
         return f"{dict(WEEK_DAYS).get(self.based_on_week_day)} | {dict(WEEKS).get(self.based_on_week)}"
 
 
+from django.db.models import Sum
+
+
 class AvailableLeave(HorillaModel):
     employee_id = models.ForeignKey(
         Employee,
@@ -311,25 +368,14 @@ class AvailableLeave(HorillaModel):
     def __str__(self):
         return f"{self.employee_id} | {self.leave_type_id}"
 
-    def forcasted_leaves(self):
-        forecasted_leave = {}
-        if self.leave_type_id.reset_based == "monthly":
-            today = datetime.now()
-            for i in range(1, 7):  # Calculate for the next 6 months
-                next_month = today + relativedelta(months=i)
-                if self.leave_type_id.carryforward_max:
-                    forecasted_leave[next_month.strftime("%Y-%m")] = (
-                        self.available_days
-                        + min(
-                            self.leave_type_id.carryforward_max,
-                            (self.leave_type_id.total_days * i),
-                        )
-                    )
-                else:
-                    forecasted_leave[next_month.strftime("%Y-%m")] = (
-                        self.available_days + (self.leave_type_id.total_days * i)
-                    )
-        return forecasted_leave
+    def forcasted_leaves(self, date):
+        if isinstance(date, str):
+            date = datetime.strptime(date, "%Y-%m-%d").date()
+        next_reset_date = self.leave_type_id.leave_type_next_reset_date()
+        if next_reset_date and next_reset_date <= date:
+            return self.leave_type_id.total_days
+
+        return 0
 
     # Resetting carryforward days
 
@@ -399,6 +445,15 @@ class AvailableLeave(HorillaModel):
                     )
 
         return reset_date
+
+    def leave_taken(self):
+        leave_taken = LeaveRequest.objects.filter(
+            leave_type_id=self.leave_type_id,
+            employee_id=self.employee_id,
+            status="approved",
+        ).aggregate(total_sum=Sum("requested_days"))
+
+        return int(leave_taken["total_sum"]) if leave_taken["total_sum"] else 0
 
     # Setting the expiration date for carryforward leaves
     def set_expired_date(self, available_leave, assigned_date):
@@ -528,7 +583,7 @@ class LeaveRequest(HorillaModel):
         """
         This method is used to return the total penalties in the late early instance
         """
-        return self.penaltyaccount_set.count()
+        return self.penaltyaccounts_set.count()
 
     def requested_dates(self):
         """
@@ -550,7 +605,7 @@ class LeaveRequest(HorillaModel):
         :return: this functions returns a list of all holiday dates.
         """
         holiday_dates = []
-        holidays = Holiday.objects.all()
+        holidays = Holidays.objects.all()
         for holiday in holidays:
             holiday_start_date = holiday.start_date
             holiday_end_date = holiday.end_date
@@ -567,7 +622,7 @@ class LeaveRequest(HorillaModel):
         :return: This function returns a list of all company leave dates"""
         from datetime import date
 
-        company_leaves = CompanyLeave.objects.all()
+        company_leaves = CompanyLeaves.objects.all()
         company_leave_dates = []
         for company_leave in company_leaves:
             if self:
@@ -581,17 +636,20 @@ class LeaveRequest(HorillaModel):
                     # Set Sunday as the first day of the week
                     calendar.setfirstweekday(6)
                     month_calendar = calendar.monthcalendar(year, month)
-                    weeks = month_calendar[int(based_on_week)]
-                    weekdays_in_weeks = [day for day in weeks if day != 0]
-                    for day in weekdays_in_weeks:
-                        date = datetime.strptime(
-                            f"{year}-{month:02}-{day:02}", "%Y-%m-%d"
-                        ).date()
-                        if (
-                            date.weekday() == int(based_on_week_day)
-                            and date not in company_leave_dates
-                        ):
-                            company_leave_dates.append(date)
+                    try:
+                        weeks = month_calendar[int(based_on_week)]
+                        weekdays_in_weeks = [day for day in weeks if day != 0]
+                        for day in weekdays_in_weeks:
+                            date = datetime.strptime(
+                                f"{year}-{month:02}-{day:02}", "%Y-%m-%d"
+                            ).date()
+                            if (
+                                date.weekday() == int(based_on_week_day)
+                                and date not in company_leave_dates
+                            ):
+                                company_leave_dates.append(date)
+                    except IndexError:
+                        pass
                 else:
                     # Set Monday as the first day of the week
                     calendar.setfirstweekday(0)
@@ -622,10 +680,14 @@ class LeaveRequest(HorillaModel):
         else:
             self.exclude_leaves()
 
-        self.leave_clashes_count = self.count_leave_clashes()
+        if self.status in ["cancelled", "rejected"]:
+            self.leave_clashes_count = 0
+        else:
+            self.leave_clashes_count = self.count_leave_clashes()
+
+        super().save(*args, **kwargs)
 
         self.update_leave_clashes_count()
-        super().save(*args, **kwargs)
         work_info = EmployeeWorkInformation.objects.filter(employee_id=self.employee_id)
         department_id = None
         conditions = None
@@ -668,6 +730,8 @@ class LeaveRequest(HorillaModel):
     def clean(self):
         cleaned_data = super().clean()
         restricted_leave = RestrictLeave.objects.all()
+        leave_type_instance = LeaveType.objects.get(name=self.leave_type_id)
+
         work_info = EmployeeWorkInformation.objects.filter(employee_id=self.employee_id)
         if work_info.exists():
             emp_dep = self.employee_id.employee_work_info.department_id
@@ -675,29 +739,54 @@ class LeaveRequest(HorillaModel):
 
         request = getattr(horilla_middlewares._thread_locals, "request", None)
         if not request.user.is_superuser:
-            if self.start_date < date.today():
-                raise ValidationError(_("Requests cannot be made for past dates."))
-        if request.user.has_perm("leave.add_restrictleave") == False:
+            if EmployeePastLeaveRestrict.objects.first().enabled:
+                if self.start_date < date.today():
+                    raise ValidationError(_("Requests cannot be made for past dates."))
+        if request.user.is_superuser:
+
             for restrict in restricted_leave:
                 restri = restrict.id
                 requ_days = self.requested_dates()
-                restri_days = restrict_leaves(restri)
-                if (
-                    restrict.department == emp_dep
-                    and len(restrict.job_position.all()) == 0
-                ):
 
-                    # Check if any date in requ_days is present in restri_days
-                    if any(date in restri_days for date in requ_days):
-                        raise ValidationError(
-                            "You cannot request leave for this date range. The requestesd dates are restricted, Please contact admin."
-                        )
-                elif restrict.job_position.all():
-                    if emp_job in restrict.job_position.all():
+                restri_days = []
+
+                if (
+                    restrict.include_all
+                    and len(restrict.exclued_leave_types.all()) == 0
+                ):
+                    restri_days = restrict_leaves(restri)
+
+                if restrict.exclued_leave_types.all():
+                    excluded = []
+                    for exclued in restrict.exclued_leave_types.all():
+                        excluded.append(exclued)
+                    if self.leave_type_id in excluded:
+                        pass
+                    else:
+                        restri_days = restrict_leaves(restri)
+
+                if restrict.spesific_leave_types.all():
+                    for spesific in restrict.spesific_leave_types.all():
+                        if str(spesific.name) == str(leave_type_instance):
+                            restri_days = restrict_leaves(restri)
+
+                if restri_days:
+                    if (
+                        restrict.department == emp_dep
+                        and len(restrict.job_position.all()) == 0
+                    ):
+
+                        # Check if any date in requ_days is present in restri_days
                         if any(date in restri_days for date in requ_days):
                             raise ValidationError(
                                 "You cannot request leave for this date range. The requestesd dates are restricted, Please contact admin."
                             )
+                    elif restrict.job_position.all():
+                        if emp_job in restrict.job_position.all():
+                            if any(date in restri_days for date in requ_days):
+                                raise ValidationError(
+                                    "You cannot request leave for this date range. The requestesd dates are restricted, Please contact admin."
+                                )
 
         return cleaned_data
 
@@ -813,7 +902,9 @@ class LeaveRequest(HorillaModel):
         """
         Update the leave clashes count for all leave requests.
         """
-        leave_requests_to_update = LeaveRequest.objects.all().exclude(id=self.id)
+        leave_requests_to_update = LeaveRequest.objects.exclude(
+            Q(id=self.id) | Q(status="cancelled") | Q(status="rejected")
+        )
 
         for leave_request in leave_requests_to_update:
             leave_request.leave_clashes_count = leave_request.count_leave_clashes()
@@ -829,17 +920,22 @@ class LeaveRequest(HorillaModel):
         with other employees' requested dates.
         """
         work_info = EmployeeWorkInformation.objects.filter(employee_id=self.employee_id)
-        if work_info.exists():
-            overlapping_requests = LeaveRequest.objects.exclude(id=self.id).filter(
-                Q(
-                    employee_id__employee_work_info__department_id=self.employee_id.employee_work_info.department_id
+        if work_info.exists() and self.status not in ["cancelled", "rejected"]:
+            overlapping_requests = (
+                LeaveRequest.objects.exclude(id=self.id)
+                .filter(
+                    Q(
+                        employee_id__employee_work_info__department_id=self.employee_id.employee_work_info.department_id
+                    )
+                    | Q(
+                        employee_id__employee_work_info__job_position_id=self.employee_id.employee_work_info.job_position_id
+                    ),
+                    start_date__lte=self.end_date,
+                    end_date__gte=self.start_date,
                 )
-                | Q(
-                    employee_id__employee_work_info__job_position_id=self.employee_id.employee_work_info.job_position_id
-                ),
-                start_date__lte=self.end_date,
-                end_date__gte=self.start_date,
+                .exclude(Q(status="cancelled") | Q(status="rejected"))
             )
+
             return overlapping_requests.count()
         return 0
 
@@ -944,7 +1040,7 @@ class LeaveRequestConditionApproval(models.Model):
 
 
 class RestrictLeave(HorillaModel):
-    title = models.CharField(max_length=20)
+    title = models.CharField(max_length=200)
     start_date = models.DateField(verbose_name=_("Start Date"))
     end_date = models.DateField(verbose_name=_("End Date"))
     department = models.ForeignKey(
@@ -958,6 +1054,23 @@ class RestrictLeave(HorillaModel):
             "If no job positions are specifically selected, the system will consider all job positions under the selected department."
         ),
     )
+    include_all = models.BooleanField(
+        default=True, help_text=_("Enable to select all Leave types.")
+    )
+    spesific_leave_types = models.ManyToManyField(
+        LeaveType,
+        verbose_name=_("Spesific leave types"),
+        related_name="spesific_leave_type",
+        blank=True,
+        help_text=_("Choose specific leave types to restrict."),
+    )
+    exclued_leave_types = models.ManyToManyField(
+        LeaveType,
+        verbose_name=_("Exclude leave types"),
+        related_name="excluded_leave_type",
+        blank=True,
+        help_text=_("Choose leave types to exclude from restriction."),
+    )
 
     description = models.TextField(
         null=True, verbose_name=_("Description"), max_length=255
@@ -967,72 +1080,75 @@ class RestrictLeave(HorillaModel):
         return f"{self.title}"
 
 
-class CompensatoryLeaveRequest(HorillaModel):
-    from attendance.models import Attendance
+if apps.is_installed("attendance"):
 
-    leave_type_id = models.ForeignKey(
-        LeaveType, on_delete=models.PROTECT, verbose_name="Leave type"
-    )
-    employee_id = models.ForeignKey(
-        Employee, on_delete=models.CASCADE, verbose_name="Employee"
-    )
-    attendance_id = models.ManyToManyField(Attendance, verbose_name="Attendance")
-    requested_days = models.FloatField(blank=True, null=True)
-    requested_date = models.DateField(default=timezone.now)
-    description = models.TextField(max_length=255)
-    status = models.CharField(
-        max_length=30, choices=LEAVE_ALLOCATION_STATUS, default="requested"
-    )
-    reject_reason = models.TextField(blank=True, max_length=255)
-    history = HorillaAuditLog(
-        related_name="history_set",
-        bases=[
-            HorillaAuditInfo,
-        ],
-    )
-    objects = HorillaCompanyManager(
-        related_company_field="employee_id__employee_work_info__company_id"
-    )
-
-    class Meta:
-        ordering = ["-id"]
-
-    def __str__(self):
-        return f"{self.employee_id}| {self.leave_type_id}| {self.id}"
-
-    def assign_compensatory_leave_type(self):
-        available_leave, created = AvailableLeave.objects.get_or_create(
-            employee_id=self.employee_id,
-            leave_type_id=self.leave_type_id,
+    class CompensatoryLeaveRequest(HorillaModel):
+        leave_type_id = models.ForeignKey(
+            LeaveType, on_delete=models.PROTECT, verbose_name="Leave type"
         )
-        available_leave.available_days += self.requested_days
-        available_leave.save()
+        employee_id = models.ForeignKey(
+            Employee, on_delete=models.CASCADE, verbose_name="Employee"
+        )
+        attendance_id = models.ManyToManyField(
+            "attendance.Attendance",
+            verbose_name="Attendance",
+        )
+        requested_days = models.FloatField(blank=True, null=True)
+        requested_date = models.DateField(default=timezone.now)
+        description = models.TextField(max_length=255)
+        status = models.CharField(
+            max_length=30, choices=LEAVE_ALLOCATION_STATUS, default="requested"
+        )
+        reject_reason = models.TextField(blank=True, max_length=255)
+        history = HorillaAuditLog(
+            related_name="history_set",
+            bases=[
+                HorillaAuditInfo,
+            ],
+        )
+        objects = HorillaCompanyManager(
+            related_company_field="employee_id__employee_work_info__company_id"
+        )
 
-    def exclude_compensatory_leave(self):
-        if AvailableLeave.objects.filter(
-            employee_id=self.employee_id,
-            leave_type_id=self.leave_type_id,
-        ).exists():
-            available_leave = AvailableLeave.objects.filter(
+        class Meta:
+            ordering = ["-id"]
+
+        def __str__(self):
+            return f"{self.employee_id}| {self.leave_type_id}| {self.id}"
+
+        def assign_compensatory_leave_type(self):
+            available_leave, created = AvailableLeave.objects.get_or_create(
                 employee_id=self.employee_id,
                 leave_type_id=self.leave_type_id,
-            ).first()
-            if available_leave.available_days < self.requested_days:
-                available_leave.available_days = 0
-                available_leave.carryforward_days = max(
-                    0,
-                    available_leave.carryforward_days
-                    - (self.requested_days - available_leave.available_days),
-                )
-            else:
-                available_leave.available_days -= self.requested_days
+            )
+            available_leave.available_days += self.requested_days
             available_leave.save()
 
-    def save(self, *args, **kwargs):
-        self.leave_type_id = LeaveType.objects.filter(
-            is_compensatory_leave=True
-        ).first()
-        super().save(*args, **kwargs)
+        def exclude_compensatory_leave(self):
+            if AvailableLeave.objects.filter(
+                employee_id=self.employee_id,
+                leave_type_id=self.leave_type_id,
+            ).exists():
+                available_leave = AvailableLeave.objects.filter(
+                    employee_id=self.employee_id,
+                    leave_type_id=self.leave_type_id,
+                ).first()
+                if available_leave.available_days < self.requested_days:
+                    available_leave.available_days = 0
+                    available_leave.carryforward_days = max(
+                        0,
+                        available_leave.carryforward_days
+                        - (self.requested_days - available_leave.available_days),
+                    )
+                else:
+                    available_leave.available_days -= self.requested_days
+                available_leave.save()
+
+        def save(self, *args, **kwargs):
+            self.leave_type_id = LeaveType.objects.filter(
+                is_compensatory_leave=True
+            ).first()
+            super().save(*args, **kwargs)
 
 
 class LeaveGeneralSetting(HorillaModel):
@@ -1045,15 +1161,122 @@ class LeaveGeneralSetting(HorillaModel):
     company_id = models.ForeignKey(Company, on_delete=models.CASCADE, null=True)
 
 
-class CompensatoryLeaverequestComment(HorillaModel):
+if apps.is_installed("attendance"):
+
+    class CompensatoryLeaverequestComment(HorillaModel):
+        """
+        CompensatoryLeaverequestComment Model
+        """
+
+        request_id = models.ForeignKey(
+            CompensatoryLeaveRequest, on_delete=models.CASCADE
+        )
+        employee_id = models.ForeignKey(Employee, on_delete=models.CASCADE)
+        files = models.ManyToManyField(LeaverequestFile, blank=True)
+        comment = models.TextField(null=True, verbose_name=_("Comment"), max_length=255)
+
+        def __str__(self) -> str:
+            return f"{self.comment}"
+
+
+class EmployeePastLeaveRestrict(HorillaModel):
+    enabled = models.BooleanField(default=True)
+
+
+if apps.is_installed("attendance"):
+
+    class OverrideLeaveRequests(LeaveRequest):
+        """
+        Class to override Attendance model save method
+        """
+
+        # Additional fields and methods specific to AnotherModel
+        @receiver(pre_save, sender=LeaveRequest)
+        def leaverequest_pre_save(sender, instance, **_kwargs):
+            """
+            Overriding LeaveRequest model save method
+            """
+            WorkRecords = get_horilla_model_class(
+                app_label="attendance", model="workrecords"
+            )
+            if (
+                instance.start_date == instance.end_date
+                and instance.end_date_breakdown != instance.start_date_breakdown
+            ):
+                instance.end_date_breakdown = instance.start_date_breakdown
+                super(LeaveRequest, instance).save()
+
+            period_dates = get_date_range(instance.start_date, instance.end_date)
+            if instance.status == "approved":
+                for date in period_dates:
+                    try:
+                        work_entry = (
+                            WorkRecords.objects.filter(
+                                date=date,
+                                employee_id=instance.employee_id,
+                            )
+                            if WorkRecords.objects.filter(
+                                date=date,
+                                employee_id=instance.employee_id,
+                            ).exists()
+                            else WorkRecords()
+                        )
+                        work_entry.employee_id = instance.employee_id
+                        work_entry.is_leave_record = True
+                        work_entry.day_percentage = (
+                            0.50
+                            if instance.start_date == date
+                            and instance.start_date_breakdown == "first_half"
+                            or instance.end_date == date
+                            and instance.end_date_breakdown == "second_half"
+                            else 0.00
+                        )
+                        status = (
+                            "CONF"
+                            if instance.start_date == date
+                            and instance.start_date_breakdown == "first_half"
+                            or instance.end_date == date
+                            and instance.end_date_breakdown == "second_half"
+                            else "ABS"
+                        )
+                        work_entry.work_record_type = status
+                        work_entry.date = date
+                        work_entry.message = (
+                            "Absent"
+                            if status == "ABS"
+                            else _("Half day Attendance need to validate")
+                        )
+                        work_entry.save()
+                    except:
+                        pass
+
+            else:
+                for date in period_dates:
+                    WorkRecords.objects.filter(
+                        is_leave_record=True,
+                        date=date,
+                        employee_id=instance.employee_id,
+                    ).delete()
+
+
+@receiver(post_save, sender=LeaveRequest)
+def update_available(sender, instance, **kwargs):
     """
-    CompensatoryLeaverequestComment Model
+    post save method to update the available leaves
     """
 
-    request_id = models.ForeignKey(CompensatoryLeaveRequest, on_delete=models.CASCADE)
-    employee_id = models.ForeignKey(Employee, on_delete=models.CASCADE)
-    files = models.ManyToManyField(LeaverequestFile, blank=True)
-    comment = models.TextField(null=True, verbose_name=_("Comment"), max_length=255)
+    _sender = sender
 
-    def __str__(self) -> str:
-        return f"{self.comment}"
+    def update_leaves():
+        try:
+            if instance.leave_type_id:
+                available_leaves = instance.employee_id.available_leave.filter(
+                    leave_type_id=instance.leave_type_id
+                )
+                for assigned in available_leaves:
+                    assigned.save()
+        except Exception as e:
+            pass
+
+    thread = threading.Thread(target=update_leaves)
+    thread.start()

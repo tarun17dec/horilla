@@ -55,7 +55,7 @@ class AssetForm(ModelForm):
 
         model = Asset
         fields = "__all__"
-        exclude = ["is_active"]
+        exclude = ["is_active", "owner"]
         widgets = {
             "asset_name": forms.TextInput(
                 attrs={"placeholder": "Macbook Pro.", "class": "oh-input w-100"}
@@ -102,7 +102,7 @@ class AssetForm(ModelForm):
         instance = kwargs.get("instance")
         if instance:
             kwargs["initial"] = set_date_field_initial(instance)
-        super(AssetForm, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         reload_queryset(self.fields)
         self.fields["asset_category_id"].widget.attrs.update({"id": str(uuid.uuid4())})
         self.fields["asset_lot_number_id"].widget.attrs.update(
@@ -159,6 +159,7 @@ class DocumentForm(forms.ModelForm):
                 "type": "File",
                 "class": "form-control",
                 "multiple": "True",
+                "accept": ".jpeg, .jpg, .png, .pdf",
             }
         )
     )
@@ -303,10 +304,7 @@ class AssetRequestForm(ModelForm):
 
     def __init__(self, *args, **kwargs):
         user = kwargs.pop("user", None)
-        super(AssetRequestForm, self).__init__(
-            *args,
-            **kwargs,
-        )
+        super().__init__(*args, **kwargs)
         reload_queryset(self.fields)
         if user is not None and user.has_perm("asset.add_assetrequest"):
             self.fields["requested_employee_id"].queryset = Employee.objects.all()
@@ -328,7 +326,7 @@ class AssetAllocationForm(ModelForm):
     """
 
     def __init__(self, *args, **kwargs):
-        super(AssetAllocationForm, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         reload_queryset(self.fields)
         self.fields["asset_id"].queryset = Asset.objects.filter(
             asset_status="Available"
@@ -411,7 +409,10 @@ class AssetReturnForm(ModelForm):
         }
 
     def __init__(self, *args, **kwargs):
-        super(AssetReturnForm, self).__init__(*args, **kwargs)
+        """
+        Initializes the AssetReturnForm with initial values and custom field settings.
+        """
+        super().__init__(*args, **kwargs)
         self.fields["return_date"].initial = date.today()
 
         self.fields["return_images"] = MultipleFileField(label="Images")

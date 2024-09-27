@@ -9,7 +9,9 @@ from django.urls import path
 from payroll.views import tax_views
 
 urlpatterns = [
-    path("filing-status-view", tax_views.filing_status_view, name="filing-status-view"),
+    path(
+        "filing-status-view/", tax_views.filing_status_view, name="filing-status-view"
+    ),
     path(
         "create-filing-status",
         tax_views.create_filing_status,
@@ -50,4 +52,5 @@ urlpatterns = [
         tax_views.delete_tax_bracket,
         name="tax-bracket-delete",
     ),
+    path("update-py-code/<int:pk>/", tax_views.update_py_code, name="update-py-code"),
 ]

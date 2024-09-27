@@ -9,6 +9,7 @@ import json
 import os
 import re
 from datetime import date
+from uuid import uuid4
 
 import django
 from django import forms
@@ -24,7 +25,6 @@ from django.utils.translation import gettext_lazy as _
 from base.horilla_company_manager import HorillaCompanyManager
 from base.models import Company, JobPosition
 from employee.models import Employee
-from horilla.decorators import logger
 from horilla.models import HorillaModel
 from horilla_audit.methods import get_diff
 from horilla_audit.models import HorillaAuditInfo, HorillaAuditLog
@@ -65,6 +65,12 @@ def validate_image(value):
     return value
 
 
+def candidate_photo_upload_path(instance, filename):
+    ext = filename.split(".")[-1]
+    filename = f"{instance.name.replace(' ', '_')}_{filename}_{uuid4()}.{ext}"
+    return os.path.join("recruitment/profile/", filename)
+
+
 class SurveyTemplate(HorillaModel):
     """
     SurveyTemplate Model
@@ -74,11 +80,27 @@ class SurveyTemplate(HorillaModel):
     description = models.TextField(null=True, blank=True)
     is_general_template = models.BooleanField(default=False, editable=False)
     company_id = models.ForeignKey(
-        Company, on_delete=models.CASCADE, null=True, blank=True
+        Company,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        verbose_name=_("Company"),
     )
 
     def __str__(self) -> str:
         return self.title
+
+
+class Skill(HorillaModel):
+    title = models.CharField(max_length=100)
+
+    def __str__(self):
+        return self.title
+
+    def save(self, *args, **kwargs):
+        title = self.title
+        self.title = title.capitalize()
+        super().save(*args, **kwargs)
 
 
 class Recruitment(HorillaModel):
@@ -137,8 +159,15 @@ class Recruitment(HorillaModel):
     )
     start_date = models.DateField(default=django.utils.timezone.now)
     end_date = models.DateField(blank=True, null=True)
+    skills = models.ManyToManyField(Skill, blank=True)
     objects = HorillaCompanyManager()
     default = models.manager.Manager()
+    optional_profile_image = models.BooleanField(
+        default=False, help_text=_("Profile image not mandatory for candidate creation")
+    )
+    optional_resume = models.BooleanField(
+        default=False, help_text=_("Resume not mandatory for candidate creation")
+    )
 
     class Meta:
         """
@@ -176,14 +205,20 @@ class Recruitment(HorillaModel):
     def clean(self):
         if self.title is None:
             raise ValidationError({"title": _("This field is required")})
+        if self.is_published:
+            if self.vacancy <= 0:
+                raise ValidationError(
+                    _(
+                        "Vacancy must be greater than zero if the recruitment is publishing."
+                    )
+                )
+
         if self.end_date is not None and (
             self.start_date is not None and self.start_date > self.end_date
         ):
             raise ValidationError(
                 {"end_date": _("End date cannot be less than start date.")}
             )
-        # if not self.is_event_based and self.job_position_id is None:
-        #     raise ValidationError({"job_position_id": _("This field is required")})
         return super().clean()
 
     def save(self, *args, **kwargs):
@@ -292,7 +327,7 @@ class Candidate(HorillaModel):
         ("other", _("Other")),
     ]
     name = models.CharField(max_length=100, null=True, verbose_name=_("Name"))
-    profile = models.ImageField(upload_to="recruitment/profile", null=True)
+    profile = models.ImageField(upload_to=candidate_photo_upload_path, null=True)
     portfolio = models.URLField(max_length=200, blank=True)
     recruitment_id = models.ForeignKey(
         Recruitment,
@@ -572,7 +607,11 @@ class RejectReason(HorillaModel):
     )
     description = models.TextField(null=True, blank=True, max_length=255)
     company_id = models.ForeignKey(
-        Company, on_delete=models.CASCADE, null=True, blank=True
+        Company,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        verbose_name=_("Company"),
     )
     objects = HorillaCompanyManager()
 
@@ -655,11 +694,12 @@ class RecruitmentSurvey(HorillaModel):
     template_id = models.ManyToManyField(
         SurveyTemplate, verbose_name="Template", blank=True
     )
-    question = models.TextField(null=False)
+    is_mandatory = models.BooleanField(default=False)
     recruitment_ids = models.ManyToManyField(
         Recruitment,
         verbose_name=_("Recruitment"),
     )
+    question = models.TextField(null=False)
     job_position_ids = models.ManyToManyField(
         JobPosition, verbose_name=_("Job Positions"), editable=False
     )
@@ -671,7 +711,6 @@ class RecruitmentSurvey(HorillaModel):
     options = models.TextField(
         null=True, default="", help_text=_("Separate choices by ',  '"), max_length=255
     )
-    is_mandatory = models.BooleanField(default=False)
     objects = HorillaCompanyManager(related_company_field="recruitment_ids__company_id")
 
     def __str__(self) -> str:
@@ -885,3 +924,19 @@ class InterviewSchedule(HorillaModel):
 
     def __str__(self) -> str:
         return f"{self.candidate_id} -Interview."
+
+
+class Resume(models.Model):
+    file = models.FileField(
+        upload_to="recruitment/resume",
+        validators=[
+            validate_pdf,
+        ],
+    )
+    recruitment_id = models.ForeignKey(
+        Recruitment, on_delete=models.CASCADE, related_name="resume"
+    )
+    is_candidate = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"{self.recruitment_id} - Resume {self.pk}"

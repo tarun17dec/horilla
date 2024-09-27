@@ -316,7 +316,7 @@ $("#bulkAssignedLeavesDelete").click(function (e) {
   });
 });
 
-$("#assign-leave-type-info-import").click(function (e) {
+$(".assign-leave-type-info-import").click(function (e) {
   e.preventDefault();
   var languageCode = null;
   getCurrentLanguageCode(function (code) {
@@ -333,7 +333,7 @@ $("#assign-leave-type-info-import").click(function (e) {
       if (result.isConfirmed) {
         $.ajax({
           type: "GET",
-          url: "assign-leave-type-excel",
+          url: "/leave/assign-leave-type-excel",
           dataType: "binary",
           xhrFields: {
             responseType: "blob",
@@ -356,53 +356,6 @@ $("#assign-leave-type-info-import").click(function (e) {
       }
     });
   });
-});
-
-$("#assignLeaveTypeImportForm").submit(function (e) {
-  e.preventDefault();
-
-  // Create a FormData object to send the file
-  $("#uploadContainer").css("display", "none");
-  $("#uploading").css("display", "block");
-  var formData = new FormData(this);
-
-  fetch("/leave/assign-leave-type-info-import", {
-    method: "POST",
-    dataType: "binary",
-    body: formData,
-    processData: false,
-    contentType: false,
-    headers: {
-      // Include the CSRF token in the headers
-      "X-CSRFToken": "{{ csrf_token }}",
-    },
-    xhrFields: {
-      responseType: "blob",
-    },
-  })
-    .then((response) => {
-      if (response.ok) {
-        return response.blob(); // Use response.blob() to get the binary data
-      } else {
-        // Handle errors, e.g., show an error message
-      }
-    })
-    .then((blob) => {
-      if (blob) {
-        // Create a Blob from the binary data
-        const file = new Blob([blob], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        });
-        const url = URL.createObjectURL(file);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "AssignLeaveError.xlsx";
-        document.body.appendChild(link);
-        link.click();
-        window.location.href = "/leave/assign-view";
-      }
-    })
-    .catch((error) => {});
 });
 
 $("#select-all-fields").change(function () {

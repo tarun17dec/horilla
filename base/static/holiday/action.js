@@ -6,6 +6,14 @@ var rowMessages = {
   fr: " Sélectionné",
 };
 
+var excelMessages = {
+  ar: "هل ترغب في تنزيل ملف Excel؟",
+  de: "Möchten Sie die Excel-Datei herunterladen?",
+  es: "¿Desea descargar el archivo de Excel?",
+  en: "Do you want to download the excel file?",
+  fr: "Voulez-vous télécharger le fichier Excel?",
+};
+
 var deleteHolidayMessages = {
   ar: "هل تريد حقًا حذف جميع العطل المحددة؟",
   de: "Möchten Sie wirklich alle ausgewählten Feiertage löschen?",
@@ -28,6 +36,9 @@ var downloadMessages = {
   en: "Do you want to download the template?",
   fr: "Voulez-vous télécharger le modèle ?",
 };
+function makeListUnique(list) {
+  return Array.from(new Set(list));
+}
 
 function createHolidayHxValue() {
   var pd = $(".oh-pagination").attr("data-pd");
@@ -138,7 +149,7 @@ function selectAllHolidays() {
   if (savedFilters && savedFilters["filterData"] !== null) {
     var filter = savedFilters["filterData"];
     $.ajax({
-      url: "/leave/holiday-select-filter",
+      url: "/holiday-select-filter",
       data: { page: "all", filter: JSON.stringify(filter) },
       type: "GET",
       dataType: "json",
@@ -166,7 +177,7 @@ function selectAllHolidays() {
     });
   } else {
     $.ajax({
-      url: "/leave/holiday-select",
+      url: "/holiday-select",
       data: { page: "all" },
       type: "GET",
       dataType: "json",
@@ -202,7 +213,7 @@ function selectAllHolidays() {
 function unselectAllHolidays() {
   $("#selectedHolidays").attr("data-clicked", 0);
   $.ajax({
-    url: "/leave/holiday-select",
+    url: "/holiday-select",
     data: { page: "all", filter: "{}" },
     type: "GET",
     dataType: "json",
@@ -253,7 +264,7 @@ function exportHolidays() {
       if (result.isConfirmed) {
         $.ajax({
           type: "GET",
-          url: "/leave/holiday-info-export",
+          url: "/holiday-info-export",
           data: {
             ids: JSON.stringify(ids),
           },
@@ -312,7 +323,7 @@ $("#bulkHolidaysDelete").click(function (e) {
           ids = JSON.parse($("#selectedHolidays").attr("data-ids"));
           $.ajax({
             type: "POST",
-            url: "/leave/holidays-bulk-delete",
+            url: "/holidays-bulk-delete",
             data: {
               csrfmiddlewaretoken: getCookie("csrftoken"),
               ids: JSON.stringify(ids),
@@ -330,7 +341,7 @@ $("#bulkHolidaysDelete").click(function (e) {
   });
 });
 
-$("#holidaysInfoImport").click(function (e) {
+$(".holidaysInfoImport").click(function (e) {
   e.preventDefault();
   var languageCode = null;
   getCurrentLanguageCode(function (code) {
@@ -370,53 +381,4 @@ $("#holidaysInfoImport").click(function (e) {
       }
     });
   });
-});
-
-$("#holidaysImportForm").submit(function (e) {
-  e.preventDefault();
-
-  // Create a FormData object to send the file
-  $("#uploadContainer").css("display", "none");
-  $("#uploading").css("display", "block");
-  var formData = new FormData(this);
-
-  fetch("/leave/holidays-info-import", {
-    method: "POST",
-    dataType: "binary",
-    body: formData,
-    processData: false,
-    contentType: false,
-    headers: {
-      // Include the CSRF token in the headers
-      "X-CSRFToken": "{{ csrf_token }}",
-    },
-    xhrFields: {
-      responseType: "blob",
-    },
-  })
-    .then((response) => {
-      if (response.ok) {
-        return response.blob(); // Use response.blob() to get the binary data
-      } else {
-        // Handle errors, e.g., show an error message
-      }
-    })
-    .then((blob) => {
-      if (blob) {
-        // Create a Blob from the binary data
-        const file = new Blob([blob], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        });
-        const url = URL.createObjectURL(file);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "HolidayImportError.xlsx";
-        document.body.appendChild(link);
-        link.click();
-        window.location.href = "/leave/holiday-view";
-      } else {
-        window.location.reload();
-      }
-    })
-    .catch((error) => {});
 });
