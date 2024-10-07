@@ -947,7 +947,8 @@ def task_all_create(request):
     if request.method == "POST":
         form = TaskAllForm(request.POST, request.FILES)
         if form.is_valid():
-            form.save()
+            task = form.save(commit=False)
+            task.save()
             messages.success(request, _("New task created"))
             response = render(
                 request,

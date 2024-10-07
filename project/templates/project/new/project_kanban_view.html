@@ -1,7 +1,7 @@
 
 {% load static %}
 
-{% load i18n %} {% load yes_no %}
+{% load i18n %}
 {% load basefilters %}
 
 
@@ -65,7 +65,7 @@
                         <div class="oh-kanban-card__profile-container">
                             {% if project.image %}
                                 <img
-                                src="/media/{{emp.employee_profile}}"
+                                src="{{emp.employee_profile.url}}"
                                 class="oh-kanban-card__profile-image"
                                 alt="Username"
                                 />

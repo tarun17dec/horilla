@@ -7,6 +7,7 @@ This module is used to register models for project app
 
 from datetime import date
 
+from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
@@ -167,7 +168,6 @@ class Task(models.Model):
     objects = models.Manager()
 
     def clean(self) -> None:
-        # print(f'self.end_date: {self.end_date }, self.project.end_date :{self.project.end_date} ')
         if self.end_date is not None and self.project.end_date is not None:
             if (
                 self.project.end_date < self.end_date
